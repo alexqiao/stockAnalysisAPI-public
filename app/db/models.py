@@ -1,7 +1,7 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Date, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, date
 
 Base = declarative_base()
 
@@ -37,7 +37,8 @@ class StockAnalysis(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     stock_symbol = Column(String(10), nullable=False, index=True)
-    news_data = Column(Text)
-    analysis_result = Column(Text)
-    recommendation = Column(String(50))
+    analysis_date = Column(Date, nullable=False, default=date.today)
+    analysis_result = Column(JSON)
+    latest_price_data = Column(JSON)
+    news_data = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
