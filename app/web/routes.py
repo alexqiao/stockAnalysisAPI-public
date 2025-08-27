@@ -2,14 +2,14 @@ from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from app.database import get_db
-from app.models import User
-from app.auth import authenticate_user, create_access_token, get_current_user, get_password_hash
+from app.db.database import get_db
+from app.db.models import User
+from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash
 from datetime import timedelta
 from typing import Optional
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory="app/web/templates")
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -158,7 +158,7 @@ async def get_current_user_from_cookie(request: Request, db: Session) -> Optiona
         
         # 直接解码JWT token而不是调用get_current_user依赖项
         from jose import JWTError, jwt
-        from app.auth import SECRET_KEY, ALGORITHM
+        from app.core.security import SECRET_KEY, ALGORITHM
         
         payload = jwt.decode(token_value, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")

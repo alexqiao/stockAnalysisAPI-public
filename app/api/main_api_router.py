@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-from app.database import get_db
-from app.models import User, Subscription, StockAnalysis
+from app.db.database import get_db
+from app.db.models import User, Subscription, StockAnalysis
 from app.schemas import UserCreate, UserResponse, SubscriptionCreate, SubscriptionResponse, StockAnalysisResponse, Token
-from app.auth import authenticate_user, create_access_token, get_current_user, get_password_hash, get_current_user_from_cookie_or_header
+from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash, get_current_user_from_cookie_or_header
 from services.alpha_vantage_api import AlphaVantageAPI
 from services.ai_analyzer import AIAnalyzer
 from services.email_service import EmailService

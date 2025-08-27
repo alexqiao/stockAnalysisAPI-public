@@ -1,8 +1,8 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
-from app.database import SessionLocal
-from app.models import User, Subscription
+from app.db.database import SessionLocal
+from app.db.models import User, Subscription
 from services.alpha_vantage_api import AlphaVantageAPI
 from services.ai_analyzer import AIAnalyzer
 from services.email_service import EmailService
