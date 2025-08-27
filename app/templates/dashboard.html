@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - Stock News Analyzer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stock-item {
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    .stock-item:hover {
+        background-color: #f8f9fa;
+    }
+    .analysis-result {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        margin-top: 1rem;
+    }
+    .news-item {
+        border-left: 3px solid #3498db;
+        padding-left: 1rem;
+        margin-bottom: 1rem;
+    }
+    .loading {
+        display: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">我的股票订阅</h5>
+            </div>
+            <div class="card-body">
+                <div class="row" id="stocks-container">
+                    {% for stock in user.get_subscribed_stocks_list() %}
+                    <div class="col-md-6 mb-3">
+                        <div class="card stock-item" onclick="analyzeStock('{{ stock }}')">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h6 class="card-title mb-1">{{ stock }}</h6>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); deleteStock('{{ stock }}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                                <small class="text-muted">点击查看分析</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                
+                <div class="mt-4">
+                    <button class="btn btn-primary" onclick="addStock()">
+                        <i class="fas fa-plus"></i> 添加股票
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">股票分析结果</h5>
+            </div>
+            <div class="card-body">
+                <div id="analysis-result" class="analysis-result" style="display: none;">
+                    <h6 id="analysis-title"></h6>
+                    <div id="analysis-content"></div>
+                </div>
+                <div id="analysis-loading" class="text-center loading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">正在分析股票...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">用户信息</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>用户名:</strong> {{ user.username }}</p>
+                <p><strong>邮箱:</strong> {{ user.email }}</p>
+                <p><strong>订阅股票数:</strong> {{ user.get_subscribed_stocks_list()|length }}</p>
+                
+                <hr>
+                
+                <h6>邮件设置</h6>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="emailNotifications" 
+                           {% if user.email_notifications %}checked{% endif %}
+                           onchange="toggleEmailNotifications()">
+                    <label class="form-check-label" for="emailNotifications">
+                        接收每日分析报告
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加股票模态框 -->
+<div class="modal fade" id="addStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">添加股票</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addStockForm">
+                    <div class="mb-3">
+                        <label for="stockSymbol" class="form-label">股票代码</label>
+                        <input type="text" class="form-control" id="stockSymbol" required>
+                        <div class="form-text">例如: AAPL, GOOGL, MSFT</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitAddStock()">添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function analyzeStock(symbol) {
+    const resultDiv = document.getElementById('analysis-result');
+    const loadingDiv = document.getElementById('analysis-loading');
+    const titleDiv = document.getElementById('analysis-title');
+    const contentDiv = document.getElementById('analysis-content');
+    
+    resultDiv.style.display = 'none';
+    loadingDiv.style.display = 'block';
+    
+    // 直接发送请求，不需要token和headers
+    axios.get(`/api/analyze/${symbol}`)
+    .then(response => {
+        titleDiv.textContent = `${symbol} 分析报告`;
+        contentDiv.innerHTML = `
+            <div class="news-item">
+                <h6>总体评价</h6>
+                <p>${response.data.analysis?.overall_sentiment || '暂无评价'}</p>
+            </div>
+            <div class="news-item">
+                <h6>投资建议</h6>
+                <p>${response.data.analysis?.recommendation || '暂无建议'}</p>
+            </div>
+            <div class="news-item">
+                <h6>分析摘要</h6>
+                <p>${response.data.analysis?.summary || '暂无摘要'}</p>
+            </div>
+            <div class="news-item">
+                <h6>关键点</h6>
+                <ul>
+${(response.data.analysis?.key_points || []).map(point => `<li>${point}</li>`).join('') || '<li>暂无关键点</li>'}
+</ul>
+            </div>
+<div class="news-item">
+    <h6>最新日K数据</h6>
+    <p>开盘价: ${response.data.latest_data?.open || 'N/A'}</p>
+    <p>最高价: ${response.data.latest_data?.high || 'N/A'}</p>
+    <p>最低价: ${response.data.latest_data?.low || 'N/A'}</p>
+    <p>收盘价: ${response.data.latest_data?.close || 'N/A'}</p>
+    <p>交易量: ${response.data.latest_data?.volume || 'N/A'}</p>
+</div>
+<div class="news-item">
+    <h6>关键新闻</h6>
+    <ul>
+        ${(response.data.news || []).slice(0, 5).map(news => `<li><a href="${news.url || '#'}" target="_blank">${news.title || news}</a></li>`).join('')}
+    </ul>
+</div>
+        `;
+        resultDiv.style.display = 'block';
+    })
+    .catch(error => {
+    // **关键修改：从 error.response.data.detail 获取详细错误信息**
+    const errorMessage = error.response?.data?.detail || '未知错误';
+    contentDiv.innerHTML = `<div class="alert alert-danger">分析失败: ${errorMessage}</div>`;
+    resultDiv.style.display = 'block';
+    })
+    .finally(() => {
+        loadingDiv.style.display = 'none';
+    });
+}
+
+function addStock() {
+    const modal = new bootstrap.Modal(document.getElementById('addStockModal'));
+    modal.show();
+}
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        let cookieValue = parts.pop().split(';').shift();
+        
+        // 处理可能的引号包围
+        if (cookieValue && cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
+            cookieValue = cookieValue.substring(1, cookieValue.length - 1);
+        }
+        
+        return cookieValue;
+    }
+    return null;
+}
+
+function submitAddStock() {
+    const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
+    if (!symbol) return;
+    
+    // 直接发送请求，不需要token和headers
+    axios.post('/api/subscribe', {stock_symbol: symbol})
+    .then(response => {
+        location.reload();
+    })
+    .catch(error => {
+        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+    });
+}
+
+function toggleEmailNotifications() {
+    const enabled = document.getElementById('emailNotifications').checked;
+    // 直接发送请求，不需要token和headers
+    axios.post('/api/toggle-notifications', {enabled: enabled})
+    .then(response => {
+        console.log('邮件通知设置已更新');
+    })
+    .catch(error => {
+        alert('设置更新失败: ' + (error.response?.data?.error || '未知错误'));
+        document.getElementById('emailNotifications').checked = !enabled;
+    });
+}
+
+function deleteStock(symbol) {
+    if (!confirm(`确定要删除股票 ${symbol} 吗？`)) {
+        return;
+    }
+    
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = token;
+    }
+    
+    // 发送带有认证信息的请求
+    axios.delete(`/api/unsubscribe/${symbol}`, { headers: headers })
+    .then(response => {
+        console.log('删除成功:', response.data);
+        // 删除成功后重新加载页面
+        location.reload();
+    })
+    .catch(error => {
+        console.error('删除失败:', error.response?.data?.detail || '未知错误');
+        alert('删除失败: ' + (error.response?.data?.detail || '未知错误'));
+    });
+}
+</script>
+{% endblock %}

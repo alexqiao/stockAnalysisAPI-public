@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}注册 - Stock News Analyzer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="card-title text-center mb-4">注册新账户</h2>
+                
+                {% if error %}
+                <div class="alert alert-danger" role="alert">
+                    {{ error }}
+                </div>
+                {% endif %}
+                
+                <form method="post">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">用户名</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="email" class="form-label">邮箱地址</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">密码</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="stocks" class="form-label">订阅股票代码</label>
+                        <input type="text" class="form-control" id="stocks" name="stocks" 
+                               placeholder="例如: AAPL,GOOGL,MSFT" required>
+                        <div class="form-text">多个股票代码用逗号分隔</div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">注册</button>
+                </form>
+                
+                <div class="text-center mt-3">
+                    <p>已有账户？ <a href="/login">立即登录</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

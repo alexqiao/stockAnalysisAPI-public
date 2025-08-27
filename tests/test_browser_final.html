@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>浏览器Cookie测试</title>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+</head>
+<body>
+    <h1>浏览器Cookie测试页面</h1>
+    <button onclick="testCookies()">测试Cookie读取</button>
+    <button onclick="testAddStock()">测试添加股票</button>
+    
+    <div id="result" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;"></div>
+
+    <script>
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) {
+            let cookieValue = parts.pop().split(';').shift();
+            
+            // 处理可能的引号包围
+            if (cookieValue && cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
+                cookieValue = cookieValue.substring(1, cookieValue.length - 1);
+            }
+            
+            // 如果cookie值包含"Bearer "前缀，去掉它
+            if (cookieValue && cookieValue.startsWith('Bearer ')) {
+                return cookieValue.substring(7); // 去掉"Bearer "前缀
+            }
+            return cookieValue;
+        }
+        return null;
+    }
+
+    function testCookies() {
+        const resultDiv = document.getElementById('result');
+        resultDiv.innerHTML = '';
+        
+        console.log('当前所有cookies:', document.cookie);
+        
+        const token = getCookie('access_token');
+        console.log('access_token cookie值:', token);
+        
+        let html = '<h3>Cookie测试结果:</h3>';
+        html += `<p>所有Cookies: ${document.cookie}</p>`;
+        html += `<p>Access Token Cookie: ${token || '未找到'}</p>`;
+        
+        if (token) {
+            html += '<p style="color: green;">✅ Cookie读取成功!</p>';
+            try {
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                html += `<p>用户名: ${payload.sub}</p>`;
+                html += `<p>过期时间: ${new Date(payload.exp * 1000)}</p>`;
+            } catch (e) {
+                html += `<p style="color: red;">Token解析失败: ${e}</p>`;
+            }
+        } else {
+            html += '<p style="color: red;">❌ 未找到access_token cookie，请先登录</p>';
+        }
+        
+        resultDiv.innerHTML = html;
+    }
+
+    function testAddStock() {
+        const resultDiv = document.getElementById('result');
+        resultDiv.innerHTML = '';
+        
+        const token = getCookie('access_token');
+        if (!token) {
+            resultDiv.innerHTML = '<p style="color: red;">❌ 请先登录再测试添加股票功能</p>';
+            return;
+        }
+        
+        resultDiv.innerHTML = '<p>正在添加股票AAPL...</p>';
+        
+        axios.post('http://localhost:8000/api/subscribe', {
+            stock_symbol: 'AAPL'
+        }, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        })
+        .then(response => {
+            resultDiv.innerHTML = `
+                <p style="color: green;">✅ 股票添加成功!</p>
+                <p>响应: ${JSON.stringify(response.data)}</p>
+            `;
+            console.log('添加成功:', response.data);
+        })
+        .catch(error => {
+            resultDiv.innerHTML = `
+                <p style="color: red;">❌ 添加失败!</p>
+                <p>错误: ${error.response?.data?.detail || error.message}</p>
+                <p>状态码: ${error.response?.status}</p>
+            `;
+            console.error('添加失败:', error);
+        });
+    }
+    </script>
+</body>
+</html>
