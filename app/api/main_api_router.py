@@ -139,41 +139,38 @@ def analyze_stock(
     current_user: User = Depends(get_current_user_from_cookie_or_header),
     db: Session = Depends(get_db)
 ):
-    """分析股票"""
+    """获取股票分析报告"""
     symbol = symbol.upper()
     
-    # 获取股票数据
-    news_data = alpha_api.get_stock_news(symbol)
-    price_data = alpha_api.get_daily_prices(symbol)
+    # 查询数据库获取最新的分析报告
+    latest_analysis = db.query(StockAnalysis).filter(
+        StockAnalysis.stock_symbol == symbol
+    ).order_by(
+        StockAnalysis.analysis_date.desc()
+    ).first()
     
-    # **关键修改：在这里检查数据获取是否成功**
-    if not news_data or not price_data:
-        # 如果任一数据获取失败，则提前返回错误，不再调用AI
+    # 如果找不到记录，返回404错误
+    if not latest_analysis:
         raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT, # 504 表示上游服务器（Alpha Vantage）无响应
-            detail=f"无法从上游服务获取 {symbol} 的完整数据，请稍后重试。"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"股票 {symbol} 的分析报告尚未生成，请稍后再试。"
         )
-    print("news data and price data fetched successfully")
-
     
-    # AI分析
-    analysis_result = ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
-    
-    # **关键修改：检查分析结果中是否有error字段**
-    if "error" in analysis_result:
-        # 如果有错误，则向前端返回 502 Bad Gateway 错误
-        # 这比返回 200 OK 更准确，因为它表示上游服务（AI模型）出了问题
+    # 格式化响应数据
+    try:
+        news_data = latest_analysis.news_data or {}
+        return {
+            "symbol": latest_analysis.stock_symbol,
+            "analysis_date": latest_analysis.analysis_date.isoformat(),
+            "news": news_data.get("news", []) if isinstance(news_data, dict) else [],
+            "analysis": latest_analysis.analysis_result if latest_analysis.analysis_result is not None else {},
+            "latest_data": latest_analysis.latest_price_data if latest_analysis.latest_price_data is not None else {}
+        }
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI分析服务失败: {analysis_result['error']}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"处理分析报告时发生内部错误: {str(e)}"
         )
-
-    return {
-        "symbol": symbol,
-        "news": news_data.get("news", []),
-        "analysis": analysis_result.get("analysis", {}),
-        "latest_data": price_data  # Add the latest daily stock data
-    }
 
 @router.post("/send-report")
 def send_daily_report(

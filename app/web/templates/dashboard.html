@@ -145,10 +145,21 @@ function analyzeStock(symbol) {
     resultDiv.style.display = 'none';
     loadingDiv.style.display = 'block';
     
-    // 直接发送请求，不需要token和headers
-    axios.get(`/api/analyze/${symbol}`)
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    console.log("Frontend: Retrieved token from cookie:", token);
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+    }
+    console.log("Frontend: Sending headers with Authorization:", headers);
+    
+    // 发送带有认证信息的请求
+    axios.get(`/api/analyze/${symbol}`, { headers: headers })
     .then(response => {
-        titleDiv.textContent = `${symbol} 分析报告`;
+        titleDiv.textContent = `${symbol} 分析报告 (更新于 ${response.data.analysis_date})`;
         contentDiv.innerHTML = `
             <div class="news-item">
                 <h6>总体评价</h6>
@@ -210,6 +221,13 @@ function getCookie(name) {
         // 处理可能的引号包围
         if (cookieValue && cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
             cookieValue = cookieValue.substring(1, cookieValue.length - 1);
+        }
+        
+        // 移除 "Bearer " 前缀，如果存在的话
+        if (cookieValue && cookieValue.startsWith('Bearer%20')) { // URL编码的空格
+            cookieValue = cookieValue.substring(9); 
+        } else if (cookieValue && cookieValue.startsWith('Bearer ')) {
+            cookieValue = cookieValue.substring(7);
         }
         
         return cookieValue;

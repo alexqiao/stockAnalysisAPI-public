@@ -75,16 +75,16 @@ async def login(
     db: Session = Depends(get_db)
 ):
     """处理登录表单提交"""
-    print(f"登录尝试: username={username}")
+    print(f"登录尝试: username={username}, password={password}")
     user = authenticate_user(db, username, password)
     if not user:
-        print("登录失败: 用户名或密码错误")
+        print(f"登录失败: 用户名或密码错误. authenticate_user returned None for username={username}")
         return templates.TemplateResponse(
             "login.html",
             {"request": request, "error": "用户名或密码错误"}
         )
     
-    print(f"登录成功: {user.username}")
+    print(f"登录成功: {user.username}. User ID: {user.id}")
     # 创建访问令牌
     access_token_expires = timedelta(days=7)
     access_token = create_access_token(
@@ -98,7 +98,7 @@ async def login(
     response.set_cookie(
         key="access_token",
         value=f"Bearer {access_token}",
-        httponly=True,
+        # httponly=True, # 移除 httponly 以允许前端JS访问
         max_age=7 * 24 * 60 * 60  # 7天
     )
     print(f"重定向到: /dashboard")
