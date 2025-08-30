@@ -88,7 +88,12 @@
             </div>
             <div class="card-body">
                 <p><strong>用户名:</strong> {{ user.username }}</p>
-                <p><strong>邮箱:</strong> {{ user.email }}</p>
+                <p>
+                    <strong>邮箱:</strong> {{ user.email }}
+                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="showUpdateEmailModal()">
+                        <i class="fas fa-edit"></i> 修改
+                    </button>
+                </p>
                 <p><strong>订阅股票数:</strong> {{ user.get_subscribed_stocks_list()|length }}</p>
                 
                 <hr>
@@ -127,6 +132,32 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                 <button type="button" class="btn btn-primary" onclick="submitAddStock()">添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 修改邮箱模态框 -->
+<div class="modal fade" id="updateEmailModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">修改邮箱</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="updateEmailForm">
+                    <div class="mb-3">
+                        <label for="newEmail" class="form-label">新邮箱地址</label>
+                        <input type="email" class="form-control" id="newEmail" required
+                               value="{{ user.email }}">
+                        <div class="form-text">请输入有效的新邮箱地址</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitUpdateEmail()">保存</button>
             </div>
         </div>
     </div>
@@ -286,6 +317,44 @@ function deleteStock(symbol) {
     .catch(error => {
         console.error('删除失败:', error.response?.data?.detail || '未知错误');
         alert('删除失败: ' + (error.response?.data?.detail || '未知错误'));
+    });
+}
+
+function showUpdateEmailModal() {
+    const modal = new bootstrap.Modal(document.getElementById('updateEmailModal'));
+    modal.show();
+}
+
+function submitUpdateEmail() {
+    const newEmail = document.getElementById('newEmail').value.trim();
+    
+    if (!newEmail) {
+        alert('请输入邮箱地址');
+        return;
+    }
+    
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+        headers["Content-Type"] = "application/json";
+    }
+    
+    // 发送邮箱更新请求
+    axios.put('/api/users/me/email', { email: newEmail }, { headers: headers })
+    .then(response => {
+        alert('邮箱更新成功！');
+        // 关闭模态框并重新加载页面
+        const modal = bootstrap.Modal.getInstance(document.getElementById('updateEmailModal'));
+        modal.hide();
+        location.reload();
+    })
+    .catch(error => {
+        const errorMessage = error.response?.data?.detail || '更新失败';
+        alert('邮箱更新失败: ' + errorMessage);
     });
 }
 </script>

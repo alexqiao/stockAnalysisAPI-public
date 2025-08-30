@@ -16,7 +16,7 @@
 - **后端**: FastAPI
 - **数据库**: SQLite (开发) / PostgreSQL (生产)
 - **认证**: JWT
-- **AI分析**: Ollama + Llama 2
+- **AI分析**: Ollama + Llama 2 / DeepSeek API (可选)
 - **股票数据**: Alpha Vantage API
 - **测试**: pytest + responses
 

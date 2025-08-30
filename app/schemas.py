@@ -12,6 +12,10 @@ class UserCreate(UserBase):
     password: str
 
 
+class UserUpdateEmail(BaseModel):
+    email: EmailStr
+
+
 class UserResponse(UserBase):
     id: int
     is_active: bool

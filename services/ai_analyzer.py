@@ -3,13 +3,25 @@ import json
 import os
 from typing import Dict, Optional
 import re
+from config import Config
 
 class AIAnalyzer:
     def __init__(self, model_name: str = None):
-        # Using environment variables for configuration, with defaults
-        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "qwen3:14b")
-        self.ollama_url = f"{self.ollama_base_url}/api/chat"
+        self.config = Config()
+        self.model_type = self.config.AI_MODEL_TYPE.lower()
+        
+        if self.model_type == "ollama":
+            # Ollama配置
+            self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            self.model_name = model_name or os.getenv("OLLAMA_MODEL", "qwen3:14b")
+            self.ollama_url = f"{self.ollama_base_url}/api/chat"
+        elif self.model_type == "deepseek":
+            # DeepSeek配置
+            self.deepseek_api_key = self.config.DEEPSEEK_API_KEY
+            self.deepseek_api_url = self.config.DEEPSEEK_API_URL
+            self.model_name = model_name or self.config.DEEPSEEK_MODEL
+        else:
+            raise ValueError(f"Unsupported AI model type: {self.model_type}")
     def extract_json_from_qwen_output(self,text: str) -> dict or None:
         """
         使用正则表达式从Qwen模型输出中提取JSON内容。
@@ -81,61 +93,113 @@ Respond with a single, valid JSON object that contains your complete analysis. T
 Do not include any text, explanations, or code formatting marks like ```json before or after the JSON object.
 """
 
-        payload = {
-            "model": self.model_name,
-            "stream": False,
-            #"format": "json",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a helpful financial analysis assistant that responds only with a single, valid JSON object."
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
+        # 根据模型类型选择不同的API调用方式
+        if self.model_type == "ollama":
+            payload = {
+                "model": self.model_name,
+                "stream": False,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful financial analysis assistant that responds only with a single, valid JSON object."
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt
+                    }
+                ],
+                "options": {
+                    "temperature": 0.5
                 }
-            ],
-            "options": {
-                "temperature": 0.5
             }
-        }
-        
-        try:
-            response = requests.post(self.ollama_url, json=payload, timeout=120)
-            response.raise_for_status()
             
-            result = response.json()
-            #print("result is ",result)
-            raw_response_text = result.get("message", {}).get("content", "").strip()
-
-            print(f"Raw AI response: {raw_response_text}")
-
-            # Gracefully handle empty or malformed responses from the AI model
-            if not raw_response_text:
-                error_message = "AI model returned an empty response. This could be due to high server load, a model configuration issue, or an overly restrictive prompt."
-                print(f"Warning: {error_message}")
-                return {"symbol": symbol, "analysis": {}, "error": error_message}
-
             try:
+                response = requests.post(self.ollama_url, json=payload, timeout=120)
+                response.raise_for_status()
+                
+                result = response.json()
+                raw_response_text = result.get("message", {}).get("content", "").strip()
+                
+                print(f"Raw AI response from Ollama: {raw_response_text}")
+                
+            except requests.exceptions.RequestException as e:
+                error_message = f"Could not connect to Ollama service: {e}"
+                print(f"Error analyzing stock {symbol}: {error_message}")
+                return {"symbol": symbol, "analysis": {}, "error": error_message}
+                
+        elif self.model_type == "deepseek":
+            if not self.deepseek_api_key:
+                error_message = "DeepSeek API key is not configured"
+                print(f"Error: {error_message}")
+                return {"symbol": symbol, "analysis": {}, "error": error_message}
+                
+            payload = {
+                "model": self.model_name,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful financial analysis assistant that responds only with a single, valid JSON object."
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt
+                    }
+                ],
+                "temperature": 0.5,
+                "response_format": {"type": "json_object"}
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            try:
+                response = requests.post(self.deepseek_api_url, json=payload, headers=headers, timeout=120)
+                response.raise_for_status()
+                
+                result = response.json()
+                raw_response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                
+                print(f"Raw AI response from DeepSeek: {raw_response_text}")
+                
+            except requests.exceptions.RequestException as e:
+                error_message = f"Could not connect to DeepSeek API: {e}"
+                print(f"Error analyzing stock {symbol}: {error_message}")
+                return {"symbol": symbol, "analysis": {}, "error": error_message}
+        
+        else:
+            error_message = f"Unsupported AI model type: {self.model_type}"
+            print(f"Error: {error_message}")
+            return {"symbol": symbol, "analysis": {}, "error": error_message}
+
+        # 处理AI响应（通用逻辑）
+        # Gracefully handle empty or malformed responses from the AI model
+        if not raw_response_text:
+            error_message = "AI model returned an empty response. This could be due to high server load, a model configuration issue, or an overly restrictive prompt."
+            print(f"Warning: {error_message}")
+            return {"symbol": symbol, "analysis": {}, "error": error_message}
+
+        try:
+            # 对于DeepSeek，由于使用了response_format=json_object，可以直接解析JSON
+            if self.model_type == "deepseek":
+                analysis = json.loads(raw_response_text)
+            else:
+                # 对于Ollama，使用原有的JSON提取逻辑
                 extracted_json = self.extract_json_from_qwen_output(raw_response_text)
                 extracted_json = json.dumps(extracted_json, indent=2, ensure_ascii=False)
                 analysis = json.loads(extracted_json)
-                
-                if not isinstance(analysis, dict) or not analysis:
-                    error_message = "AI model returned valid JSON, but it was empty or not an object."
-                    print(f"Warning: {error_message}")
-                    return {"symbol": symbol, "analysis": {}, "error": error_message}
-
-                return {"symbol": symbol, "analysis": analysis}
             
-            except json.JSONDecodeError as e:
-                error_message = f"Failed to parse JSON from AI model. Error: {e}"
-                print(f"Error: {error_message}\nRaw Response was: {raw_response_text}")
+            if not isinstance(analysis, dict) or not analysis:
+                error_message = "AI model returned valid JSON, but it was empty or not an object."
+                print(f"Warning: {error_message}")
                 return {"symbol": symbol, "analysis": {}, "error": error_message}
 
-        except requests.exceptions.RequestException as e:
-            error_message = f"Could not connect to the AI analysis service: {e}"
-            print(f"Error analyzing stock {symbol}: {error_message}")
+            return {"symbol": symbol, "analysis": analysis}
+        
+        except json.JSONDecodeError as e:
+            error_message = f"Failed to parse JSON from AI model. Error: {e}"
+            print(f"Error: {error_message}\nRaw Response was: {raw_response_text}")
             return {"symbol": symbol, "analysis": {}, "error": error_message}
             
         except Exception as e:

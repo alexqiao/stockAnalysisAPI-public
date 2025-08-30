@@ -13,6 +13,14 @@ class Config:
     # OpenAI API配置
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     
+    # DeepSeek API配置
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+    DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    
+    # AI模型选择配置
+    AI_MODEL_TYPE = os.getenv("AI_MODEL_TYPE", "ollama")  # ollama 或 deepseek
+    
     # 邮件配置
     SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))

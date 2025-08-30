@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
 from app.db.database import get_db
 from app.db.models import User, Subscription, StockAnalysis
-from app.schemas import UserCreate, UserResponse, SubscriptionCreate, SubscriptionResponse, StockAnalysisResponse, Token
+from app.schemas import UserCreate, UserResponse, UserUpdateEmail, SubscriptionCreate, SubscriptionResponse, StockAnalysisResponse, Token
 from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash, get_current_user_from_cookie_or_header
 from services.alpha_vantage_api import AlphaVantageAPI
 from services.ai_analyzer import AIAnalyzer
@@ -66,6 +66,33 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @router.get("/users/me", response_model=UserResponse)
 def read_users_me(current_user: User = Depends(get_current_user)):
     """获取当前用户信息"""
+    return current_user
+
+
+@router.put("/users/me/email", response_model=UserResponse)
+def update_user_email(
+    email_update: UserUpdateEmail,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """更新用户邮箱"""
+    # 检查邮箱是否已被其他用户使用
+    existing_user = db.query(User).filter(
+        User.email == email_update.email,
+        User.id != current_user.id
+    ).first()
+    
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered by another user"
+        )
+    
+    # 更新邮箱
+    current_user.email = email_update.email
+    db.commit()
+    db.refresh(current_user)
+    
     return current_user
 
 @router.post("/subscribe", response_model=SubscriptionResponse)
