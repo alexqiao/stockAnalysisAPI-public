@@ -71,8 +71,12 @@ class AIAnalyzer:
         
         # A slightly improved and clearer prompt for the model
         user_prompt = f"""
-You are an expert financial analyst. Your task is to analyze the provided stock data for {symbol}.
-Based on the news and price information, generate a comprehensive analysis.
+You are a highly experienced and expert financial analyst specializing in stock market research. Your task is to provide a comprehensive, data-driven analysis for the stock with the ticker symbol {symbol}. Your analysis must be grounded in both fundamental and technical principles, based on the provided data.
+
+**Step-by-Step Analysis & Reasoning:**
+1.  **Fundamental Analysis:** Carefully review the recent news articles. Identify key events, corporate announcements, macroeconomic factors, or industry trends that could act as catalysts (positive or negative) for the stock price. Synthesize the core sentiment and potential impact of these news items.
+2.  **Technical Analysis:** Examine the provided price information. Identify significant price trends, volatility, trading volume patterns, and key support and resistance levels. Describe what the price action suggests about market momentum and investor sentiment.
+3.  **Synthesis:** Combine your fundamental and technical findings. Explain how the news is reflected in the price action or if there is a divergence. Use this synthesis to form a cohesive investment thesis.
 
 **Input Data:**
 - **Price Information:**
@@ -80,17 +84,17 @@ Based on the news and price information, generate a comprehensive analysis.
 - **Recent News Articles:**
 {news_text}
 
-**Your Task:**
-Respond with a single, valid JSON object that contains your complete analysis. The JSON object must have the following keys:
-- "overall_sentiment": (string) Must be one of "positive", "negative", or "neutral".
-- "key_points": (array of strings) A list of the most important takeaways from the news.
-- "technical_analysis": (string) A brief analysis based on the provided price data.
+**Your Final Output Task:**
+Based on your analysis, respond with a single, valid JSON object that contains your complete analysis. The JSON object must have the following keys:
+- "overall_sentiment": (string) Must be one of "positive", "negative", or "neutral". This should reflect the overall mood derived from your analysis.
+- "key_points": (array of strings) A list of the most important takeaways from the news articles.
+- "technical_analysis": (string) A concise analysis based on the provided price data, including a mention of trend and support/resistance.
 - "recommendation": (string) Your investment recommendation. Must be one of "buy", "hold", or "sell".
-- "risk_level": (string) The perceived investment risk. Must be one of "low", "medium", or "high".
+- "risk_level": (string) The perceived investment risk. Must be one of "low", "medium", or "high". This should be justified by factors from both news and price action.
 - "summary": (string) A concise summary of your overall analysis.
-- "reasoning": (string) A clear explanation for your recommendation and summary.
+- "reasoning": (string) A clear and detailed explanation for your recommendation and summary. This should connect the fundamental news catalysts with the technical price action to justify the final conclusion.
 
-Do not include any text, explanations, or code formatting marks like ```json before or after the JSON object.
+**Important Note:** Do not include any text, explanations, or code formatting marks like ```json before or after the JSON object. The response must be a valid, standalone JSON object.
 """
 
         # 根据模型类型选择不同的API调用方式
