@@ -14,6 +14,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     email_notifications = Column(Boolean, default=True)
+    is_superuser = Column(Boolean, default=False, nullable=False) 
     created_at = Column(DateTime, default=datetime.utcnow)
     
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")

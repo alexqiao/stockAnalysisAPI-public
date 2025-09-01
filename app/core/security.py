@@ -63,7 +63,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
     return user
 
-
 async def get_current_user_from_cookie_or_header(request: Request, db: Session = Depends(get_db)):
     """从cookie或Authorization header中获取当前用户"""
     credentials_exception = HTTPException(
@@ -100,3 +99,16 @@ async def get_current_user_from_cookie_or_header(request: Request, db: Session =
         
     except JWTError:
         raise credentials_exception
+
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_user_from_cookie_or_header)
+) -> User:
+    """
+    验证当前用户是否为管理员。如果不是，则抛出403 Forbidden错误。
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="没有足够的权限执行此操作"
+        )
+    return current_user

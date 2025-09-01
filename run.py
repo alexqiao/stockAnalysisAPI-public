@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from app.db.database import engine, Base
 from app.api.main_api_router import router
+from app.api.admin_router import router as admin_router
 from app.web.routes import router as web_router
 from app.daily_tasks import scheduler
 import uvicorn
@@ -40,6 +41,7 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 app.include_router(web_router)
 
 # 配置静态文件服务

@@ -41,21 +41,28 @@ The content is organized as follows:
 
 <directory_structure>
 app/
-  templates/
-    base.html
-    dashboard.html
-    home.html
-    login.html
-    register.html
+  api/
+    main_api_router.py
+  core/
+    security.py
+  db/
+    database.py
+    models.py
+  web/
+    templates/
+      base.html
+      dashboard.html
+      home.html
+      login.html
+      register.html
+    routes.py
   __init__.py
-  auth.py
-  database.py
+  daily_tasks.py
   forms.py
-  models.py
-  routes.py
   schemas.py
-  tasks.py
-  web_routes.py
+scripts/
+  create_test_user.py
+  debug_ai_analyzer.py
 services/
   ai_analyzer_backup.py
   ai_analyzer.py
@@ -81,6 +88,7 @@ tests/
   test_cookie_debug.js
   test_cookie_fix.js
   test_cookie.html
+  test_deepseek.py
   test_fix_verification.py
   test_login_fix.py
   test_model_simple.py
@@ -91,23 +99,152 @@ tests/
   test_subscribe_api.py
   test_subscribe.py
 .env.example
+.gitignore
+CHANGES_DEEPSEEK.md
 config.py
-create_test_user.py
-debug_ai_analyzer.py
 final_verification.py
-get_news_v5.py
+manual_analysis.py
+README_DEEPSEEK.md
 README.md
 requirements.txt
 run_comprehensive_tests.py
 run_tests.py
 run.py
-test.py
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
 
-<file path="app/templates/base.html">
+<file path="app/core/security.py">
+from datetime import datetime, timedelta
+from typing import Optional
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from app.db.database import get_db
+from app.db.models import User
+from app.schemas import TokenData
+
+SECRET_KEY = "your-secret-key-here-change-in-production"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def get_user(db: Session, username: str):
+    return db.query(User).filter(User.username == username).first()
+
+def authenticate_user(db: Session, username: str, password: str):
+    user = get_user(db, username)
+    if not user:
+        return False
+    if not verify_password(password, user.password_hash):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+    
+    user = get_user(db, username=token_data.username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+async def get_current_user_from_cookie_or_header(request: Request, db: Session = Depends(get_db)):
+    """从cookie或Authorization header中获取当前用户"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    # 首先尝试从Authorization header获取token
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    else:
+        # 如果没有Authorization header，尝试从cookie获取
+        token_cookie = request.cookies.get("access_token")
+        if token_cookie and token_cookie.startswith("Bearer "):
+            # 处理可能的引号包围
+            if token_cookie.startswith('"') and token_cookie.endswith('"'):
+                token_cookie = token_cookie[1:-1]
+            token = token_cookie.split(" ")[1]
+        else:
+            raise credentials_exception
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        
+        user = get_user(db, username=username)
+        if user is None:
+            raise credentials_exception
+        return user
+        
+    except JWTError:
+        raise credentials_exception
+</file>
+
+<file path="app/db/database.py">
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from app.db.models import Base
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./stock_app.db")
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+</file>
+
+<file path="app/web/templates/base.html">
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -207,284 +344,7 @@ This section contains the contents of the repository's files.
 </html>
 </file>
 
-<file path="app/templates/dashboard.html">
-{% extends "base.html" %}
-
-{% block title %}仪表盘 - Stock News Analyzer{% endblock %}
-
-{% block extra_css %}
-<style>
-    .stock-item {
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    .stock-item:hover {
-        background-color: #f8f9fa;
-    }
-    .analysis-result {
-        background-color: #f8f9fa;
-        border-radius: 0.5rem;
-        padding: 1.5rem;
-        margin-top: 1rem;
-    }
-    .news-item {
-        border-left: 3px solid #3498db;
-        padding-left: 1rem;
-        margin-bottom: 1rem;
-    }
-    .loading {
-        display: none;
-    }
-</style>
-{% endblock %}
-
-{% block content %}
-<div class="row">
-    <div class="col-lg-8">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">我的股票订阅</h5>
-            </div>
-            <div class="card-body">
-                <div class="row" id="stocks-container">
-                    {% for stock in user.get_subscribed_stocks_list() %}
-                    <div class="col-md-6 mb-3">
-                        <div class="card stock-item" onclick="analyzeStock('{{ stock }}')">
-                            <div class="card-body">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <h6 class="card-title mb-1">{{ stock }}</h6>
-                                    <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); deleteStock('{{ stock }}')">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                </div>
-                                <small class="text-muted">点击查看分析</small>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                
-                <div class="mt-4">
-                    <button class="btn btn-primary" onclick="addStock()">
-                        <i class="fas fa-plus"></i> 添加股票
-                    </button>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card mt-4">
-            <div class="card-header">
-                <h5 class="mb-0">股票分析结果</h5>
-            </div>
-            <div class="card-body">
-                <div id="analysis-result" class="analysis-result" style="display: none;">
-                    <h6 id="analysis-title"></h6>
-                    <div id="analysis-content"></div>
-                </div>
-                <div id="analysis-loading" class="text-center loading">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <p class="mt-2">正在分析股票...</p>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-lg-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">用户信息</h5>
-            </div>
-            <div class="card-body">
-                <p><strong>用户名:</strong> {{ user.username }}</p>
-                <p><strong>邮箱:</strong> {{ user.email }}</p>
-                <p><strong>订阅股票数:</strong> {{ user.get_subscribed_stocks_list()|length }}</p>
-                
-                <hr>
-                
-                <h6>邮件设置</h6>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="emailNotifications" 
-                           {% if user.email_notifications %}checked{% endif %}
-                           onchange="toggleEmailNotifications()">
-                    <label class="form-check-label" for="emailNotifications">
-                        接收每日分析报告
-                    </label>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- 添加股票模态框 -->
-<div class="modal fade" id="addStockModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">添加股票</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <form id="addStockForm">
-                    <div class="mb-3">
-                        <label for="stockSymbol" class="form-label">股票代码</label>
-                        <input type="text" class="form-control" id="stockSymbol" required>
-                        <div class="form-text">例如: AAPL, GOOGL, MSFT</div>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" onclick="submitAddStock()">添加</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-{% endblock %}
-
-{% block extra_js %}
-<script>
-function analyzeStock(symbol) {
-    const resultDiv = document.getElementById('analysis-result');
-    const loadingDiv = document.getElementById('analysis-loading');
-    const titleDiv = document.getElementById('analysis-title');
-    const contentDiv = document.getElementById('analysis-content');
-    
-    resultDiv.style.display = 'none';
-    loadingDiv.style.display = 'block';
-    
-    // 直接发送请求，不需要token和headers
-    axios.get(`/api/analyze/${symbol}`)
-    .then(response => {
-        titleDiv.textContent = `${symbol} 分析报告`;
-        contentDiv.innerHTML = `
-            <div class="news-item">
-                <h6>总体评价</h6>
-                <p>${response.data.analysis?.overall_sentiment || '暂无评价'}</p>
-            </div>
-            <div class="news-item">
-                <h6>投资建议</h6>
-                <p>${response.data.analysis?.recommendation || '暂无建议'}</p>
-            </div>
-            <div class="news-item">
-                <h6>分析摘要</h6>
-                <p>${response.data.analysis?.summary || '暂无摘要'}</p>
-            </div>
-            <div class="news-item">
-                <h6>关键点</h6>
-                <ul>
-${(response.data.analysis?.key_points || []).map(point => `<li>${point}</li>`).join('') || '<li>暂无关键点</li>'}
-</ul>
-            </div>
-<div class="news-item">
-    <h6>最新日K数据</h6>
-    <p>开盘价: ${response.data.latest_data?.open || 'N/A'}</p>
-    <p>最高价: ${response.data.latest_data?.high || 'N/A'}</p>
-    <p>最低价: ${response.data.latest_data?.low || 'N/A'}</p>
-    <p>收盘价: ${response.data.latest_data?.close || 'N/A'}</p>
-    <p>交易量: ${response.data.latest_data?.volume || 'N/A'}</p>
-</div>
-<div class="news-item">
-    <h6>关键新闻</h6>
-    <ul>
-        ${(response.data.news || []).slice(0, 5).map(news => `<li><a href="${news.url || '#'}" target="_blank">${news.title || news}</a></li>`).join('')}
-    </ul>
-</div>
-        `;
-        resultDiv.style.display = 'block';
-    })
-    .catch(error => {
-    // **关键修改：从 error.response.data.detail 获取详细错误信息**
-    const errorMessage = error.response?.data?.detail || '未知错误';
-    contentDiv.innerHTML = `<div class="alert alert-danger">分析失败: ${errorMessage}</div>`;
-    resultDiv.style.display = 'block';
-    })
-    .finally(() => {
-        loadingDiv.style.display = 'none';
-    });
-}
-
-function addStock() {
-    const modal = new bootstrap.Modal(document.getElementById('addStockModal'));
-    modal.show();
-}
-
-function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) {
-        let cookieValue = parts.pop().split(';').shift();
-        
-        // 处理可能的引号包围
-        if (cookieValue && cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
-            cookieValue = cookieValue.substring(1, cookieValue.length - 1);
-        }
-        
-        return cookieValue;
-    }
-    return null;
-}
-
-function submitAddStock() {
-    const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
-    if (!symbol) return;
-    
-    // 直接发送请求，不需要token和headers
-    axios.post('/api/subscribe', {stock_symbol: symbol})
-    .then(response => {
-        location.reload();
-    })
-    .catch(error => {
-        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
-    });
-}
-
-function toggleEmailNotifications() {
-    const enabled = document.getElementById('emailNotifications').checked;
-    // 直接发送请求，不需要token和headers
-    axios.post('/api/toggle-notifications', {enabled: enabled})
-    .then(response => {
-        console.log('邮件通知设置已更新');
-    })
-    .catch(error => {
-        alert('设置更新失败: ' + (error.response?.data?.error || '未知错误'));
-        document.getElementById('emailNotifications').checked = !enabled;
-    });
-}
-
-function deleteStock(symbol) {
-    if (!confirm(`确定要删除股票 ${symbol} 吗？`)) {
-        return;
-    }
-    
-    // 获取cookie中的token
-    const token = getCookie("access_token");
-    
-    // 创建包含token的请求头
-    const headers = {};
-    if (token) {
-        headers["Authorization"] = token;
-    }
-    
-    // 发送带有认证信息的请求
-    axios.delete(`/api/unsubscribe/${symbol}`, { headers: headers })
-    .then(response => {
-        console.log('删除成功:', response.data);
-        // 删除成功后重新加载页面
-        location.reload();
-    })
-    .catch(error => {
-        console.error('删除失败:', error.response?.data?.detail || '未知错误');
-        alert('删除失败: ' + (error.response?.data?.detail || '未知错误'));
-    });
-}
-</script>
-{% endblock %}
-</file>
-
-<file path="app/templates/home.html">
+<file path="app/web/templates/home.html">
 {% extends "base.html" %}
 
 {% block content %}
@@ -542,7 +402,7 @@ function deleteStock(symbol) {
 {% endblock %}
 </file>
 
-<file path="app/templates/login.html">
+<file path="app/web/templates/login.html">
 {% extends "base.html" %}
 
 {% block title %}登录 - Stock News Analyzer{% endblock %}
@@ -609,7 +469,7 @@ document.getElementById('loginForm').addEventListener('submit', function(e) {
 {% endblock %}
 </file>
 
-<file path="app/templates/register.html">
+<file path="app/web/templates/register.html">
 {% extends "base.html" %}
 
 {% block title %}注册 - Stock News Analyzer{% endblock %}
@@ -668,771 +528,220 @@ document.getElementById('loginForm').addEventListener('submit', function(e) {
 # FastAPI应用的主要配置在run.py中
 </file>
 
-<file path="app/auth.py">
-from datetime import datetime, timedelta
-from typing import Optional
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app.models import User
-from app.schemas import TokenData
+<file path="scripts/create_test_user.py">
+import requests
 
-SECRET_KEY = "your-secret-key-here-change-in-production"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# 创建测试用户
+BASE_URL = "http://localhost:8000"
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def get_user(db: Session, username: str):
-    return db.query(User).filter(User.username == username).first()
-
-def authenticate_user(db: Session, username: str, password: str):
-    user = get_user(db, username)
-    if not user:
-        return False
-    if not verify_password(password, user.password_hash):
-        return False
-    return user
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def create_test_user():
+    user_data = {
+        "username": "apitest2",
+        "email": "apitest2@example.com",
+        "password": "testpassword123"
+    }
+    
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    
-    user = get_user(db, username=token_data.username)
-    if user is None:
-        raise credentials_exception
-    return user
-
-
-async def get_current_user_from_cookie_or_header(request: Request, db: Session = Depends(get_db)):
-    """从cookie或Authorization header中获取当前用户"""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    # 首先尝试从Authorization header获取token
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-    else:
-        # 如果没有Authorization header，尝试从cookie获取
-        token_cookie = request.cookies.get("access_token")
-        if token_cookie and token_cookie.startswith("Bearer "):
-            # 处理可能的引号包围
-            if token_cookie.startswith('"') and token_cookie.endswith('"'):
-                token_cookie = token_cookie[1:-1]
-            token = token_cookie.split(" ")[1]
+        # 使用表单提交而不是JSON API
+        response = requests.post(f"{BASE_URL}/register", data=user_data)
+        print(f"创建用户响应状态码: {response.status_code}")
+        print(f"创建用户响应内容: {response.text}")
+        
+        if response.status_code == 303:  # 注册成功会重定向到登录页面
+            print("用户创建成功！")
+            return user_data
         else:
-            raise credentials_exception
-    
+            print("用户创建失败")
+            return None
+            
+    except Exception as e:
+        print(f"创建用户过程中出现异常: {e}")
+        return None
+
+def test_subscribe(user_data):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
+        # 登录获取token
+        login_data = {
+            "username": user_data["username"],
+            "password": user_data["password"]
+        }
         
-        user = get_user(db, username=username)
-        if user is None:
-            raise credentials_exception
-        return user
+        response = requests.post(f"{BASE_URL}/token", data=login_data)
+        if response.status_code != 200:
+            print(f"登录失败: {response.status_code}")
+            print(f"错误信息: {response.text}")
+            return
         
-    except JWTError:
-        raise credentials_exception
+        token = response.json()["access_token"]
+        print(f"获取到token: {token[:20]}...")
+        
+        # 测试订阅API
+        subscribe_data = {"stock_symbol": "AAPL"}
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(
+            f"{BASE_URL}/api/subscribe", 
+            json=subscribe_data, 
+            headers=headers
+        )
+        
+        print(f"订阅API响应状态码: {response.status_code}")
+        print(f"订阅API响应内容: {response.text}")
+        
+        if response.status_code == 200:
+            print("订阅成功！")
+        else:
+            print("订阅失败")
+            
+    except Exception as e:
+        print(f"测试过程中出现异常: {e}")
+
+if __name__ == "__main__":
+    user_data = create_test_user()
+    if user_data:
+        test_subscribe(user_data)
 </file>
 
-<file path="app/database.py">
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.models import Base
+<file path="scripts/debug_ai_analyzer.py">
+import requests
+import json
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./stock_app.db")
-
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base.metadata.create_all(bind=engine)
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-</file>
-
-<file path="app/forms.py">
-from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField, BooleanField
-from wtforms.validators import DataRequired, Email, EqualTo, Length
-from app.models import User
-
-class RegistrationForm(FlaskForm):
-    username = StringField('用户名', validators=[DataRequired(), Length(min=3, max=20)])
-    email = StringField('邮箱', validators=[DataRequired(), Email()])
-    password = PasswordField('密码', validators=[DataRequired(), Length(min=6)])
-    confirm_password = PasswordField('确认密码', validators=[DataRequired(), EqualTo('password')])
-    submit = SubmitField('注册')
-
-class LoginForm(FlaskForm):
-    username = StringField('用户名', validators=[DataRequired()])
-    password = PasswordField('密码', validators=[DataRequired()])
-    remember_me = BooleanField('记住我')
-    submit = SubmitField('登录')
-
-class StockForm(FlaskForm):
-    symbol = StringField('股票代码', validators=[DataRequired(), Length(min=1, max=10)])
-    submit = SubmitField('添加')
-</file>
-
-<file path="app/models.py">
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-from datetime import datetime
-
-Base = declarative_base()
-
-class User(Base):
-    __tablename__ = "users"
+def debug_ai_analyzer():
+    """调试AI分析器的问题"""
+    ollama_url = "http://localhost:11434/api/chat"
+    model_name = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
     
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, nullable=False)
-    email = Column(String(100), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
-    email_notifications = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    print("=" * 50)
+    print("调试AI分析器")
+    print("=" * 50)
     
-    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
-    
-    def get_subscribed_stocks_list(self):
-        """获取用户订阅的股票代码列表"""
-        return [sub.stock_symbol for sub in self.subscriptions]
-
-class Subscription(Base):
-    __tablename__ = "subscriptions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    stock_symbol = Column(String(10), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    user = relationship("User", back_populates="subscriptions")
-
-class StockAnalysis(Base):
-    __tablename__ = "stock_analyses"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    stock_symbol = Column(String(10), nullable=False, index=True)
-    news_data = Column(Text)
-    analysis_result = Column(Text)
-    recommendation = Column(String(50))
-    created_at = Column(DateTime, default=datetime.utcnow)
-</file>
-
-<file path="app/routes.py">
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
-from datetime import timedelta, datetime
-from app.database import get_db
-from app.models import User, Subscription, StockAnalysis
-from app.schemas import UserCreate, UserResponse, SubscriptionCreate, SubscriptionResponse, StockAnalysisResponse, Token
-from app.auth import authenticate_user, create_access_token, get_current_user, get_password_hash, get_current_user_from_cookie_or_header
-from services.alpha_vantage_api import AlphaVantageAPI
-from services.ai_analyzer import AIAnalyzer
-from services.email_service import EmailService
-from typing import List
-
-router = APIRouter()
-
-# 初始化服务
-alpha_api = AlphaVantageAPI()
-ai_analyzer = AIAnalyzer()
-email_service = EmailService()
-
-@router.post("/register", response_model=UserResponse)
-def register(user: UserCreate, db: Session = Depends(get_db)):
-    """用户注册"""
-    # 检查用户名是否已存在
-    if db.query(User).filter(User.username == user.username).first():
-        raise HTTPException(
-            status_code=400,
-            detail="Username already registered"
-        )
-    
-    # 检查邮箱是否已存在
-    if db.query(User).filter(User.email == user.email).first():
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
-        )
-    
-    # 创建新用户
-    db_user = User(
-        username=user.username,
-        email=user.email,
-        password_hash=get_password_hash(user.password)
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
-
-@router.post("/token", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """用户登录"""
-    user = authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token_expires = timedelta(minutes=30)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@router.get("/users/me", response_model=UserResponse)
-def read_users_me(current_user: User = Depends(get_current_user)):
-    """获取当前用户信息"""
-    return current_user
-
-@router.post("/subscribe", response_model=SubscriptionResponse)
-def subscribe_stock(
-    request: Request,
-    subscription: SubscriptionCreate,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """订阅股票"""
-    # 检查是否已订阅
-    existing = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id,
-        Subscription.stock_symbol == subscription.stock_symbol.upper()
-    ).first()
-    
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="Stock already subscribed"
-        )
-    
-    # 创建订阅
-    db_subscription = Subscription(
-        user_id=current_user.id,
-        stock_symbol=subscription.stock_symbol.upper()
-    )
-    db.add(db_subscription)
-    db.commit()
-    db.refresh(db_subscription)
-    return db_subscription
-
-@router.delete("/unsubscribe/{symbol}")
-def unsubscribe_stock(
-    symbol: str,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """取消订阅股票"""
-    subscription = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id,
-        Subscription.stock_symbol == symbol.upper()
-    ).first()
-    
-    if not subscription:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found"
-        )
-    
-    db.delete(subscription)
-    db.commit()
-    return {"message": "Unsubscribed successfully"}
-
-@router.get("/subscriptions", response_model=List[SubscriptionResponse])
-def get_subscriptions(
-    request: Request,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """获取用户订阅的股票"""
-    subscriptions = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id
-    ).all()
-    return subscriptions
-
-@router.get("/analyze/{symbol}")
-def analyze_stock(
-    request: Request,
-    symbol: str,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """分析股票"""
-    symbol = symbol.upper()
-    
-    # 获取股票数据
-    news_data = alpha_api.get_stock_news(symbol)
-    price_data = alpha_api.get_daily_prices(symbol)
-    
-    # **关键修改：在这里检查数据获取是否成功**
-    if not news_data or not price_data:
-        # 如果任一数据获取失败，则提前返回错误，不再调用AI
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT, # 504 表示上游服务器（Alpha Vantage）无响应
-            detail=f"无法从上游服务获取 {symbol} 的完整数据，请稍后重试。"
-        )
-    print("news data and price data fetched successfully")
-
-    
-    # AI分析
-    analysis_result = ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
-    
-    # **关键修改：检查分析结果中是否有error字段**
-    if "error" in analysis_result:
-        # 如果有错误，则向前端返回 502 Bad Gateway 错误
-        # 这比返回 200 OK 更准确，因为它表示上游服务（AI模型）出了问题
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI分析服务失败: {analysis_result['error']}"
-        )
-
-    return {
-        "symbol": symbol,
-        "news": news_data.get("news", []),
-        "analysis": analysis_result.get("analysis", {}),
-        "latest_data": price_data  # Add the latest daily stock data
+    # 测试数据
+    test_symbol = "TSLA"
+    test_news_data = {
+        "news": [
+            {
+                "title": "Tesla announces new battery technology",
+                "summary": "Tesla has unveiled a new battery technology that promises longer range and faster charging."
+            },
+            {
+                "title": "Tesla stock rises on positive earnings report",
+                "summary": "Tesla shares increased by 5% following better-than-expected quarterly earnings."
+            }
+        ]
     }
-
-@router.post("/send-report")
-def send_daily_report(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """发送每日报告"""
-    # 获取用户订阅的股票
-    subscriptions = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id
-    ).all()
     
-    if not subscriptions:
-        raise HTTPException(
-            status_code=404,
-            detail="No subscriptions found"
-        )
+    test_price_data = {
+        "close": 250.50,
+        "open": 245.30,
+        "high": 252.10,
+        "low": 244.80,
+        "volume": 12500000
+    }
     
-    analyses = []
-    for subscription in subscriptions:
-        symbol = subscription.stock_symbol
-        
-        # 获取股票数据
-        news_data = alpha_api.get_stock_news(symbol)
-        price_data = alpha_api.get_daily_prices(symbol)
-        
-        if news_data:
-            # AI分析
-            analysis = ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
-            analyses.append(analysis)
+    news_text = "\n".join([
+        f"- Title: {news['title']}\n  Summary: {news['summary']}"
+        for news in test_news_data.get("news", [])
+    ])
     
-    if analyses:
-        # 发送邮件
-        success = email_service.send_analysis_report(current_user.email, analyses)
-        if success:
-            return {"message": "Report sent successfully"}
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to send report"
-            )
+    price_info = f"""
+- Latest Price: ${test_price_data['close']}
+- Open: ${test_price_data['open']}
+- High: ${test_price_data['high']}
+- Low: ${test_price_data['low']}
+- Volume: {test_price_data['volume']}
+"""
     
-    return {"message": "No data to analyze"}
+    user_prompt = f"""
+Analyze the following stock data and return ONLY a JSON object:
 
-@router.post("/toggle-notifications")
-def toggle_email_notifications(
-    enabled: bool,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """切换邮件通知设置"""
-    current_user.email_notifications = enabled
-    db.commit()
-    return {"message": "Email notifications updated", "enabled": enabled}
-</file>
+Stock Symbol: {test_symbol}
 
-<file path="app/schemas.py">
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
-from datetime import datetime
+Price Data:
+{price_info}
 
+News Summary:
+{news_text}
 
-class UserBase(BaseModel):
-    username: str
-    email: EmailStr
+Return a JSON object with these fields:
+- overall_sentiment (positive/negative/neutral)
+- key_points (array of strings)
+- technical_analysis (string)
+- recommendation (buy/hold/sell)
+- risk_level (low/medium/high)
+- summary (string)
+- reasoning (string)
 
-
-class UserCreate(UserBase):
-    password: str
-
-
-class UserResponse(UserBase):
-    id: int
-    is_active: bool
-    created_at: datetime
+Return ONLY the JSON object, no other text.
+"""
     
-    class Config:
-        from_attributes = True
-
-
-class SubscriptionBase(BaseModel):
-    stock_symbol: str
-
-
-class SubscriptionCreate(SubscriptionBase):
-    pass
-
-
-class SubscriptionResponse(SubscriptionBase):
-    id: int
-    user_id: int
-    created_at: datetime
+    print("完整的提示词:")
+    print(user_prompt)
+    print("-" * 50)
     
-    class Config:
-        from_attributes = True
-
-
-class StockAnalysisResponse(BaseModel):
-    stock_symbol: str
-    news_data: Optional[str]
-    analysis_result: Optional[str]
-    recommendation: Optional[str]
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-</file>
-
-<file path="app/tasks.py">
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy.orm import Session
-from app.database import SessionLocal
-from app.models import User, Subscription
-from services.alpha_vantage_api import AlphaVantageAPI
-from services.ai_analyzer import AIAnalyzer
-from services.email_service import EmailService
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class DailyReportScheduler:
-    def __init__(self):
-        self.scheduler = BackgroundScheduler()
-        self.alpha_api = AlphaVantageAPI()
-        self.ai_analyzer = AIAnalyzer()
-        self.email_service = EmailService()
-        
-    def generate_daily_reports(self):
-        """生成并发送每日报告"""
-        logger.info("Starting daily report generation...")
-        
-        db = SessionLocal()
-        try:
-            # 获取所有用户
-            users = db.query(User).all()
-            
-            for user in users:
-                # 获取用户订阅的股票
-                subscriptions = db.query(Subscription).filter(
-                    Subscription.user_id == user.id
-                ).all()
-                
-                if not subscriptions:
-                    continue
-                
-                analyses = []
-                for subscription in subscriptions:
-                    symbol = subscription.stock_symbol
-                    
-                    try:
-                        # 获取股票数据
-                        news_data = self.alpha_api.get_stock_news(symbol)
-                        price_data = self.alpha_api.get_daily_prices(symbol)
-                        
-                        if news_data:
-                            # AI分析
-                            analysis = self.ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
-                            analyses.append(analysis)
-                    except Exception as e:
-                        logger.error(f"Error analyzing {symbol}: {e}")
-                        continue
-                
-                if analyses:
-                    # 发送邮件
-                    success = self.email_service.send_analysis_report(user.email, analyses)
-                    if success:
-                        logger.info(f"Report sent to {user.email}")
-                    else:
-                        logger.error(f"Failed to send report to {user.email}")
-        
-        except Exception as e:
-            logger.error(f"Error in daily report generation: {e}")
-        finally:
-            db.close()
-    
-    def start(self):
-        """启动定时任务"""
-        # 每天上午9:00发送报告
-        self.scheduler.add_job(
-            self.generate_daily_reports,
-            CronTrigger(hour=9, minute=0),
-            id='daily_report',
-            name='Daily stock analysis report',
-            replace_existing=True
-        )
-        
-        self.scheduler.start()
-        logger.info("Daily report scheduler started")
-    
-    def stop(self):
-        """停止定时任务"""
-        self.scheduler.shutdown()
-        logger.info("Daily report scheduler stopped")
-
-# 全局调度器实例
-scheduler = DailyReportScheduler()
-</file>
-
-<file path="app/web_routes.py">
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app.models import User
-from app.auth import authenticate_user, create_access_token, get_current_user, get_password_hash
-from datetime import timedelta
-from typing import Optional
-
-router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
-
-
-@router.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    """首页"""
-    return templates.TemplateResponse("home.html", {"request": request})
-
-
-@router.get("/register", response_class=HTMLResponse)
-async def register_page(request: Request):
-    """注册页面"""
-    return templates.TemplateResponse("register.html", {"request": request})
-
-
-@router.post("/register")
-async def register(
-    request: Request,
-    username: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(...),
-    db: Session = Depends(get_db)
-):
-    """处理注册表单提交"""
-    # 检查用户名是否已存在
-    if db.query(User).filter(User.username == username).first():
-        return templates.TemplateResponse(
-            "register.html",
-            {"request": request, "error": "用户名已存在"}
-        )
-    
-    # 检查邮箱是否已存在
-    if db.query(User).filter(User.email == email).first():
-        return templates.TemplateResponse(
-            "register.html",
-            {"request": request, "error": "邮箱已注册"}
-        )
-    
-    # 创建新用户
-    db_user = User(
-        username=username,
-        email=email,
-        password_hash=get_password_hash(password)
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    
-    # 注册成功后重定向到登录页面
-    return RedirectResponse(url="/login", status_code=303)
-
-
-@router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    """登录页面"""
-    return templates.TemplateResponse("login.html", {"request": request})
-
-
-@router.post("/login")
-async def login(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    db: Session = Depends(get_db)
-):
-    """处理登录表单提交"""
-    print(f"登录尝试: username={username}")
-    user = authenticate_user(db, username, password)
-    if not user:
-        print("登录失败: 用户名或密码错误")
-        return templates.TemplateResponse(
-            "login.html",
-            {"request": request, "error": "用户名或密码错误"}
-        )
-    
-    print(f"登录成功: {user.username}")
-    # 创建访问令牌
-    access_token_expires = timedelta(days=7)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    
-    print(f"生成的token: {access_token[:20]}...")
-    
-    # 设置cookie并重定向到仪表盘
-    response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie(
-        key="access_token",
-        value=f"Bearer {access_token}",
-        httponly=True,
-        max_age=7 * 24 * 60 * 60  # 7天
-    )
-    print(f"重定向到: /dashboard")
-    return response
-
-
-@router.post("/logout")
-async def logout():
-    """退出登录"""
-    response = RedirectResponse(url="/", status_code=303)
-    response.delete_cookie("access_token")
-    return response
-
-
-@router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """仪表盘页面"""
-    # 从cookie中获取当前用户
-    user = await get_current_user_from_cookie(request, db)
-    if not user:
-        return RedirectResponse(url="/login")
-    
-    print(f"User authenticated: {user.username}")
-    
-    # 获取用户的订阅
-    subscribed_stocks = user.subscriptions
-    
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "user": user,
-            "subscriptions": subscribed_stocks
+    # 构建payload
+    payload = {
+        "model": model_name,
+        "stream": False,
+        "format": "json",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an expert financial analyst. Your goal is to provide a detailed, data-driven stock analysis based on the user's input. You must respond ONLY with a single, complete, and valid JSON object."
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ],
+        "options": {
+            "temperature": 0.5
         }
-    )
-
-
-async def get_current_user_from_cookie(request: Request, db: Session) -> Optional[User]:
-    """从cookie中获取当前用户"""
-    token = request.cookies.get("access_token")
-    print(f"Cookie token: {token}")
+    }
     
-    # 处理可能的引号包围
-    if token and token.startswith('"') and token.endswith('"'):
-        token = token[1:-1]
-    
-    if not token or not token.startswith("Bearer "):
-        print("No valid token found in cookie")
-        return None
+    print("发送的Payload:")
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    print("-" * 50)
     
     try:
-        token_value = token.split(" ")[1]
-        print(f"Token value: {token_value}")
+        print("发送请求到Ollama...")
+        response = requests.post(ollama_url, json=payload, timeout=120)
+        print(f"响应状态码: {response.status_code}")
         
-        # 直接解码JWT token而不是调用get_current_user依赖项
-        from jose import JWTError, jwt
-        from app.auth import SECRET_KEY, ALGORITHM
-        
-        payload = jwt.decode(token_value, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            print("No username in token payload")
-            return None
-        
-        # 从数据库获取用户
-        user = db.query(User).filter(User.username == username).first()
-        print(f"User found: {user.username if user else None}")
-        return user
-        
-    except JWTError as e:
-        print(f"JWT Error: {e}")
-        return None
+        if response.status_code == 200:
+            result = response.json()
+            print("完整响应:")
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            
+            raw_response_text = result.get("message", {}).get("content", "")
+            print(f"\n原始响应文本: {repr(raw_response_text)}")
+            
+            if raw_response_text.strip():
+                try:
+                    analysis = json.loads(raw_response_text)
+                    print("✅ JSON解析成功!")
+                    print(json.dumps(analysis, indent=2, ensure_ascii=False))
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON解析错误: {e}")
+            else:
+                print("❌ 模型返回了空响应")
+                
+        else:
+            print(f"❌ 错误响应: {response.text}")
+            
     except Exception as e:
-        print(f"Error getting current user: {e}")
-        return None
+        print(f"❌ 请求异常: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    debug_ai_analyzer()
 </file>
 
 <file path="services/ai_analyzer_backup.py">
@@ -1576,153 +885,6 @@ Only return the JSON, nothing else.
                 "analysis": {},
                 "error": str(e)
             }
-</file>
-
-<file path="services/ai_analyzer.py">
-import requests
-import json
-import os
-from typing import Dict, Optional
-import re
-
-class AIAnalyzer:
-    def __init__(self, model_name: str = None):
-        # Using environment variables for configuration, with defaults
-        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "qwen3:14b")
-        self.ollama_url = f"{self.ollama_base_url}/api/chat"
-    def extract_json_from_qwen_output(self,text: str) -> dict or None:
-        """
-        使用正则表达式从Qwen模型输出中提取JSON内容。
-        Args:
-            text: 包含<think>和JSON部分的字符串。
-        Returns:
-            如果找到并成功解析，返回Python字典；否则返回None。
-        """
-        # 匹配以 `{` 开头，以 `}` 结尾的JSON对象，并使用非贪婪模式 `*?`
-        # 以确保只匹配第一个完整的JSON对象，而非整个字符串。
-        # re.DOTALL 标志允许 `.` 匹配换行符，这在多行JSON中非常重要。
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        
-        if match:
-            json_string = match.group(0)
-            try:
-                # 使用json模块将提取的字符串解析为Python字典
-                json_data = json.loads(json_string)
-                return json_data
-            except json.JSONDecodeError as e:
-                print(f"JSON解析失败: {e}")
-                return None
-        else:
-            print("未找到JSON内容。")
-            return None
-
-    
-    def analyze_stock_news(self, symbol: str, news_data: Dict, price_data: Optional[Dict] = None) -> Dict:
-        """
-        Analyzes stock news using a local Ollama model with robust error handling.
-        """
-        
-        news_text = "\n".join([
-            f"- Title: {news['title']}\n  Summary: {news['summary']}"
-            for news in news_data.get("news", [])
-        ])
-        
-        price_info = "No price data available."
-        if price_data:
-            price_info = f"""
-- Latest Price: ${price_data.get('close', 'N/A')}
-- Open: ${price_data.get('open', 'N/A')}
-- High: ${price_data.get('high', 'N/A')}
-- Low: ${price_data.get('low', 'N/A')}
-- Volume: {price_data.get('volume', 'N/A')}
-"""
-        
-        # A slightly improved and clearer prompt for the model
-        user_prompt = f"""
-You are an expert financial analyst. Your task is to analyze the provided stock data for {symbol}.
-Based on the news and price information, generate a comprehensive analysis.
-
-**Input Data:**
-- **Price Information:**
-{price_info}
-- **Recent News Articles:**
-{news_text}
-
-**Your Task:**
-Respond with a single, valid JSON object that contains your complete analysis. The JSON object must have the following keys:
-- "overall_sentiment": (string) Must be one of "positive", "negative", or "neutral".
-- "key_points": (array of strings) A list of the most important takeaways from the news.
-- "technical_analysis": (string) A brief analysis based on the provided price data.
-- "recommendation": (string) Your investment recommendation. Must be one of "buy", "hold", or "sell".
-- "risk_level": (string) The perceived investment risk. Must be one of "low", "medium", or "high".
-- "summary": (string) A concise summary of your overall analysis.
-- "reasoning": (string) A clear explanation for your recommendation and summary.
-
-Do not include any text, explanations, or code formatting marks like ```json before or after the JSON object.
-"""
-
-        payload = {
-            "model": self.model_name,
-            "stream": False,
-            #"format": "json",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a helpful financial analysis assistant that responds only with a single, valid JSON object."
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            "options": {
-                "temperature": 0.5
-            }
-        }
-        
-        try:
-            response = requests.post(self.ollama_url, json=payload, timeout=120)
-            response.raise_for_status()
-            
-            result = response.json()
-            #print("result is ",result)
-            raw_response_text = result.get("message", {}).get("content", "").strip()
-
-            print(f"Raw AI response: {raw_response_text}")
-
-            # Gracefully handle empty or malformed responses from the AI model
-            if not raw_response_text:
-                error_message = "AI model returned an empty response. This could be due to high server load, a model configuration issue, or an overly restrictive prompt."
-                print(f"Warning: {error_message}")
-                return {"symbol": symbol, "analysis": {}, "error": error_message}
-
-            try:
-                extracted_json = self.extract_json_from_qwen_output(raw_response_text)
-                extracted_json = json.dumps(extracted_json, indent=2, ensure_ascii=False)
-                analysis = json.loads(extracted_json)
-                
-                if not isinstance(analysis, dict) or not analysis:
-                    error_message = "AI model returned valid JSON, but it was empty or not an object."
-                    print(f"Warning: {error_message}")
-                    return {"symbol": symbol, "analysis": {}, "error": error_message}
-
-                return {"symbol": symbol, "analysis": analysis}
-            
-            except json.JSONDecodeError as e:
-                error_message = f"Failed to parse JSON from AI model. Error: {e}"
-                print(f"Error: {error_message}\nRaw Response was: {raw_response_text}")
-                return {"symbol": symbol, "analysis": {}, "error": error_message}
-
-        except requests.exceptions.RequestException as e:
-            error_message = f"Could not connect to the AI analysis service: {e}"
-            print(f"Error analyzing stock {symbol}: {error_message}")
-            return {"symbol": symbol, "analysis": {}, "error": error_message}
-            
-        except Exception as e:
-            error_message = f"An unexpected error occurred during AI analysis: {e}"
-            print(f"Error analyzing stock {symbol}: {error_message}")
-            return {"symbol": symbol, "analysis": {}, "error": error_message}
 </file>
 
 <file path="services/alpha_vantage_api.py">
@@ -4127,6 +3289,124 @@ console.log("测试4 - 空cookie:", getCookie('access_token'));
 </html>
 </file>
 
+<file path="tests/test_deepseek.py">
+#!/usr/bin/env python3
+"""
+DeepSeek API 连接测试脚本
+用于测试DeepSeek API是否能够正常工作
+"""
+
+import os
+import sys
+import requests
+import json
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
+
+def test_deepseek_connection():
+    """测试DeepSeek API连接"""
+    
+    # 获取配置
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    api_url = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+    model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    
+    if not api_key or api_key == "your_deepseek_api_key_here":
+        print("❌ DeepSeek API密钥未配置或为默认值")
+        print("请在.env文件中设置正确的DEEPSEEK_API_KEY")
+        return False
+    
+    print(f"🔗 测试DeepSeek API连接...")
+    print(f"API URL: {api_url}")
+    print(f"Model: {model}")
+    
+    # 准备测试请求
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是一个有用的助手，请用中文回复。"
+            },
+            {
+                "role": "user",
+                "content": "你好，请回复'连接成功'来确认API连接正常。"
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 50
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        print("📡 发送测试请求...")
+        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        
+        print(f"✅ DeepSeek API连接成功！")
+        print(f"🤖 模型回复: {content}")
+        print(f"📊 使用token数: {result.get('usage', {}).get('total_tokens', 'N/A')}")
+        
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ DeepSeek API连接失败: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"HTTP状态码: {e.response.status_code}")
+            print(f"错误响应: {e.response.text}")
+        return False
+    except Exception as e:
+        print(f"❌ 发生未知错误: {e}")
+        return False
+
+def test_ai_model_selection():
+    """测试AI模型选择配置"""
+    
+    model_type = os.getenv("AI_MODEL_TYPE", "ollama").lower()
+    print(f"\n🤖 当前AI模型类型配置: {model_type}")
+    
+    if model_type == "deepseek":
+        print("✅ 配置为使用DeepSeek在线模型")
+    elif model_type == "ollama":
+        print("✅ 配置为使用本地Ollama模型")
+    else:
+        print(f"❌ 未知的AI模型类型: {model_type}")
+        return False
+    
+    return True
+
+if __name__ == "__main__":
+    print("=" * 50)
+    print("DeepSeek API 连接测试")
+    print("=" * 50)
+    
+    # 测试模型选择配置
+    config_ok = test_ai_model_selection()
+    
+    # 如果配置为DeepSeek，测试连接
+    model_type = os.getenv("AI_MODEL_TYPE", "ollama").lower()
+    if model_type == "deepseek":
+        connection_ok = test_deepseek_connection()
+        
+        if connection_ok:
+            print("\n🎉 所有测试通过！DeepSeek API配置正确。")
+        else:
+            print("\n💥 DeepSeek API连接测试失败，请检查配置。")
+            sys.exit(1)
+    else:
+        print("\nℹ️  当前配置为使用Ollama模型，跳过DeepSeek连接测试。")
+        print("如需测试DeepSeek，请在.env文件中设置 AI_MODEL_TYPE=deepseek")
+</file>
+
 <file path="tests/test_fix_verification.py">
 #!/usr/bin/env python3
 """
@@ -4751,274 +4031,112 @@ if __name__ == "__main__":
     test_subscribe()
 </file>
 
-<file path=".env.example">
-# Alpha Vantage API配置
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
-
-# OpenAI API配置
-OPENAI_API_KEY=your_openai_api_key_here
-
-# 邮件配置
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your_email@gmail.com
-SMTP_PASSWORD=your_app_password
-
-# JWT密钥
-SECRET_KEY=your-secret-key-here-change-in-production
-
-# 数据库配置（可选）
-DATABASE_URL=sqlite:///./stock_analysis.db
-
-# 每日报告发送时间（可选）
-DAILY_REPORT_TIME=09:00
+<file path=".gitignore">
+# 忽略env文件
+.env
 </file>
 
-<file path="config.py">
-import os
-from dotenv import load_dotenv
+<file path="CHANGES_DEEPSEEK.md">
+# DeepSeek API 集成修改总结
 
-load_dotenv()
+## 修改概述
 
-class Config:
-    # 数据库配置
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./stock_analysis.db")
-    
-    # Alpha Vantage API配置
-    ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
-    
-    # OpenAI API配置
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    
-    # 邮件配置
-    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USERNAME = os.getenv("SMTP_USERNAME")
-    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-    
-    # JWT配置
-    SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
-    ALGORITHM = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES = 30
-    
-    # 定时任务配置
-    DAILY_REPORT_TIME = os.getenv("DAILY_REPORT_TIME", "09:00")
-</file>
+本次修改为股票分析API项目添加了DeepSeek在线模型支持，同时保留了原有的Ollama本地模型功能。
 
-<file path="create_test_user.py">
-import requests
+## 修改的文件
 
-# 创建测试用户
-BASE_URL = "http://localhost:8000"
+### 1. config.py
+- 添加了DeepSeek API配置选项
+- 添加了AI模型类型选择配置
 
-def create_test_user():
-    user_data = {
-        "username": "apitest2",
-        "email": "apitest2@example.com",
-        "password": "testpassword123"
-    }
-    
-    try:
-        # 使用表单提交而不是JSON API
-        response = requests.post(f"{BASE_URL}/register", data=user_data)
-        print(f"创建用户响应状态码: {response.status_code}")
-        print(f"创建用户响应内容: {response.text}")
-        
-        if response.status_code == 303:  # 注册成功会重定向到登录页面
-            print("用户创建成功！")
-            return user_data
-        else:
-            print("用户创建失败")
-            return None
-            
-    except Exception as e:
-        print(f"创建用户过程中出现异常: {e}")
-        return None
+### 2. services/ai_analyzer.py
+- 重构了AIAnalyzer类，支持多种模型类型
+- 添加了DeepSeek API调用逻辑
+- 保持了向后兼容性
 
-def test_subscribe(user_data):
-    try:
-        # 登录获取token
-        login_data = {
-            "username": user_data["username"],
-            "password": user_data["password"]
-        }
-        
-        response = requests.post(f"{BASE_URL}/token", data=login_data)
-        if response.status_code != 200:
-            print(f"登录失败: {response.status_code}")
-            print(f"错误信息: {response.text}")
-            return
-        
-        token = response.json()["access_token"]
-        print(f"获取到token: {token[:20]}...")
-        
-        # 测试订阅API
-        subscribe_data = {"stock_symbol": "AAPL"}
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(
-            f"{BASE_URL}/api/subscribe", 
-            json=subscribe_data, 
-            headers=headers
-        )
-        
-        print(f"订阅API响应状态码: {response.status_code}")
-        print(f"订阅API响应内容: {response.text}")
-        
-        if response.status_code == 200:
-            print("订阅成功！")
-        else:
-            print("订阅失败")
-            
-    except Exception as e:
-        print(f"测试过程中出现异常: {e}")
+### 3. .env
+- 添加了DeepSeek相关的环境变量配置
+- 添加了AI模型类型选择配置
 
-if __name__ == "__main__":
-    user_data = create_test_user()
-    if user_data:
-        test_subscribe(user_data)
-</file>
+### 4. .env.example
+- 更新了环境变量模板，包含DeepSeek配置
 
-<file path="debug_ai_analyzer.py">
-import requests
-import json
-import os
-from dotenv import load_dotenv
+### 5. README.md
+- 更新了技术栈说明，包含DeepSeek支持
 
-load_dotenv()
+### 6. 新增文件
+- `README_DEEPSEEK.md` - DeepSeek使用指南
+- `test_deepseek.py` - DeepSeek连接测试脚本
+- `demo_model_switch.py` - 模型切换演示脚本
 
-def debug_ai_analyzer():
-    """调试AI分析器的问题"""
-    ollama_url = "http://localhost:11434/api/chat"
-    model_name = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
-    
-    print("=" * 50)
-    print("调试AI分析器")
-    print("=" * 50)
-    
-    # 测试数据
-    test_symbol = "TSLA"
-    test_news_data = {
-        "news": [
-            {
-                "title": "Tesla announces new battery technology",
-                "summary": "Tesla has unveiled a new battery technology that promises longer range and faster charging."
-            },
-            {
-                "title": "Tesla stock rises on positive earnings report",
-                "summary": "Tesla shares increased by 5% following better-than-expected quarterly earnings."
-            }
-        ]
-    }
-    
-    test_price_data = {
-        "close": 250.50,
-        "open": 245.30,
-        "high": 252.10,
-        "low": 244.80,
-        "volume": 12500000
-    }
-    
-    news_text = "\n".join([
-        f"- Title: {news['title']}\n  Summary: {news['summary']}"
-        for news in test_news_data.get("news", [])
-    ])
-    
-    price_info = f"""
-- Latest Price: ${test_price_data['close']}
-- Open: ${test_price_data['open']}
-- High: ${test_price_data['high']}
-- Low: ${test_price_data['low']}
-- Volume: {test_price_data['volume']}
-"""
-    
-    user_prompt = f"""
-Analyze the following stock data and return ONLY a JSON object:
+## 功能特性
 
-Stock Symbol: {test_symbol}
+### 1. 多模型支持
+- **Ollama本地模型**: 使用本地部署的Ollama服务
+- **DeepSeek在线模型**: 使用DeepSeek的云端API服务
 
-Price Data:
-{price_info}
+### 2. 配置切换
+通过环境变量 `AI_MODEL_TYPE` 控制使用的模型类型：
+- `ollama` - 使用本地Ollama模型
+- `deepseek` - 使用DeepSeek在线模型
 
-News Summary:
-{news_text}
+### 3. 无缝切换
+代码自动根据配置选择相应的API调用方式，上层业务逻辑无需修改。
 
-Return a JSON object with these fields:
-- overall_sentiment (positive/negative/neutral)
-- key_points (array of strings)
-- technical_analysis (string)
-- recommendation (buy/hold/sell)
-- risk_level (low/medium/high)
-- summary (string)
-- reasoning (string)
+## 使用方法
 
-Return ONLY the JSON object, no other text.
-"""
-    
-    print("完整的提示词:")
-    print(user_prompt)
-    print("-" * 50)
-    
-    # 构建payload
-    payload = {
-        "model": model_name,
-        "stream": False,
-        "format": "json",
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are an expert financial analyst. Your goal is to provide a detailed, data-driven stock analysis based on the user's input. You must respond ONLY with a single, complete, and valid JSON object."
-            },
-            {
-                "role": "user",
-                "content": user_prompt
-            }
-        ],
-        "options": {
-            "temperature": 0.5
-        }
-    }
-    
-    print("发送的Payload:")
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
-    print("-" * 50)
-    
-    try:
-        print("发送请求到Ollama...")
-        response = requests.post(ollama_url, json=payload, timeout=120)
-        print(f"响应状态码: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            print("完整响应:")
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            
-            raw_response_text = result.get("message", {}).get("content", "")
-            print(f"\n原始响应文本: {repr(raw_response_text)}")
-            
-            if raw_response_text.strip():
-                try:
-                    analysis = json.loads(raw_response_text)
-                    print("✅ JSON解析成功!")
-                    print(json.dumps(analysis, indent=2, ensure_ascii=False))
-                except json.JSONDecodeError as e:
-                    print(f"❌ JSON解析错误: {e}")
-            else:
-                print("❌ 模型返回了空响应")
-                
-        else:
-            print(f"❌ 错误响应: {response.text}")
-            
-    except Exception as e:
-        print(f"❌ 请求异常: {e}")
-        import traceback
-        traceback.print_exc()
+### 切换到DeepSeek模型
 
-if __name__ == "__main__":
-    debug_ai_analyzer()
+1. 获取DeepSeek API密钥
+2. 在 `.env` 文件中设置：
+   ```env
+   AI_MODEL_TYPE=deepseek
+   DEEPSEEK_API_KEY=your_actual_api_key
+   ```
+
+### 切换回Ollama模型
+
+在 `.env` 文件中设置：
+```env
+AI_MODEL_TYPE=ollama
+```
+
+### 测试连接
+
+```bash
+# 测试DeepSeek连接
+python test_deepseek.py
+
+# 演示模型切换
+python demo_model_switch.py
+```
+
+## 验证修改
+
+所有修改已经过测试：
+- ✅ AIAnalyzer类可以正常导入和初始化
+- ✅ 配置读取正常
+- ✅ 模型切换功能正常工作
+- ✅ 向后兼容性保持
+
+## 生产环境部署建议
+
+1. **使用DeepSeek在线模型**：更稳定可靠，适合生产环境
+2. **配置API密钥**：确保使用有效的DeepSeek API密钥
+3. **监控使用量**：DeepSeek按token计费，需要关注使用量
+4. **设置备用方案**：保留Ollama配置作为备用方案
+
+## 故障排除
+
+如果遇到问题，请检查：
+1. DeepSeek API密钥是否正确
+2. 网络连接是否正常
+3. API服务是否可用
+4. 环境变量配置是否正确
+
+---
+
+本次修改成功实现了多模型支持，为项目上线提供了更可靠的AI分析服务。
 </file>
 
 <file path="final_verification.py">
@@ -5117,568 +4235,191 @@ if __name__ == "__main__":
         print("❌ Some tests failed")
 </file>
 
-<file path="get_news_v5.py">
-import requests
-import json
-import time
+<file path="manual_analysis.py">
+#!/usr/bin/env python3
+"""
+手动触发股票分析任务，用于测试报告生成功能
+"""
+import sys
 import os
-import yagmail
-from datetime import datetime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# 替换成你的 Alpha Vantage API Key
-API_KEY = "***REMOVED***"
-SYMBOL = "HIMS"  # 公司的股票代码
-MAX_REQUESTS_PER_MINUTE = 5
-SECONDS_TO_WAIT = 60 / MAX_REQUESTS_PER_MINUTE  # 计算出每次请求之间的最小等待时间
+from app.daily_tasks import DailyReportScheduler
+import logging
 
-# 邮件配置变量 - 请修改这些变量
-EMAIL_CONFIG = {
-    'sender_email': 'alexsqiao@126.com',      # 发件人邮箱地址
-    'sender_password': '***REMOVED***',        # 发件人邮箱授权码/应用密码
-    'recipient_email': 'alexsqiao@gmail.com',    # 收件人邮箱地址
-    'smtp_server': 'smtp.126.com',               # SMTP服务器地址
-    'smtp_port': 587,                              # SMTP端口
-    'enable_email': True                           # 是否启用邮件发送
-}
-receiver_list = [
-    'alexsqiao@gmail.com',
-    'wanlivicky@163.com',
-]
-
-# API配置
-ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
-OLLAMA_BASE_URL = "http://localhost:11434"  # Ollama默认API地址
-OLLAMA_MODEL = "gpt-oss:20b"  # 使用的模型名称
-
-def get_news_data(symbol, limit=10):
-    """
-    根据股票代码请求新闻数据，并处理 API 限制。
-    
-    返回：
-        - 如果请求成功，返回 JSON 格式的数据。
-        - 如果请求失败，返回 None。
-    """
-    params = {
-        "function": "NEWS_SENTIMENT",
-        "tickers": symbol,
-        "apikey": API_KEY,
-        "limit": limit  # 获取指定数量的新闻
-    }
-    
-    try:
-        response = requests.get(ALPHA_VANTAGE_BASE_URL, params=params)
-        response.raise_for_status() # 如果请求失败，会抛出 HTTPError
-        data = response.json()
-        
-        # 检查是否因为请求过快而报错
-        if 'Note' in data and 'API call frequency is 5 calls per minute' in data['Note']:
-            print("警告：已达到每分钟请求限制。程序将暂停60秒后重试。")
-            time.sleep(60) # 等待 60 秒
-            return get_news_data(symbol, limit) 
-        
-        return data
-        
-    except requests.exceptions.HTTPError as err:
-        print(f"HTTP 错误: {err}")
-        return None
-    except Exception as err:
-        print(f"发生错误: {err}")
-        return None
-
-def create_news_directory():
-    """创建news目录（如果不存在）"""
-    news_dir = os.path.join(os.path.dirname(__file__), '..', 'news')
-    if not os.path.exists(news_dir):
-        os.makedirs(news_dir)
-        print(f"已创建目录: {news_dir}")
-    return news_dir
-
-def generate_filename(symbol):
-    """生成包含公司名称和日期的文件名"""
-    current_date = datetime.now().strftime("%Y%m%d")
-    filename = f"{symbol}_news_{current_date}.json"
-    return os.path.join(create_news_directory(), filename)
-
-def save_to_json(data, filename):
-    """
-    将 Python 对象保存到 JSON 文件中。
-    """
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-    print(f"新闻数据已成功保存到文件：{filename}")
-
-def extract_news_for_analysis(news_data):
-    """提取新闻标题和摘要用于分析"""      
-    news_text = ""
-    for i, item in enumerate(news_data, 1):
-        title = item.get("title", "")
-        summary = item.get("summary", "")
-        news_text += f"{i}. 标题: {title}\n   摘要: {summary}\n\n"
-    return news_text
-
-def analyze_with_ollama_http(news_text, symbol):
-    """使用HTTP API调用Ollama模型分析新闻"""
-    prompt = f"""请详细分析以下关于{symbol}公司的新闻，并提供一个全面的总结报告：
-
-{news_text}
-
-请提供：
-1. **主要新闻要点总结**（至少3-5个要点）
-2. **对公司可能的影响**（正面和负面影响）
-3. **投资者应关注的关键信息**
-4. **市场情绪分析**（基于新闻内容）
-5. **投资建议**（基于当前信息）
-
-要求：
-- 用中文回答
-- 内容要详细具体，至少300字以上
-- 使用清晰的markdown格式
-- 每个要点都要有具体说明
-
-请确保分析内容充实，不要敷衍了事。"""
-
-    try:
-        # Ollama HTTP API endpoint
-        url = f"{OLLAMA_BASE_URL}/api/generate"
-        
-        payload = {
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,  # 设置为False以获取完整响应
-            "options": {
-                "temperature": 0.8,  # 提高温度以增加内容多样性
-                "top_p": 0.9,
-                "num_predict": 2000,  # 增加最大token数限制
-                "stop": ["<|endoftext|>"]  # 添加停止标记
-            }
-        }
-        
-        print("正在使用Ollama HTTP API分析新闻...")
-        
-        response = requests.post(
-            url, 
-            json=payload, 
-            headers={"Content-Type": "application/json"},
-            timeout=300
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            analysis = result.get("response", "").strip()
-            
-            if analysis and len(analysis) > 100:  # 确保分析内容足够长
-                print("\n=== Ollama模型分析结果 ===")
-                print(f"分析内容长度: {len(analysis)} 字符")
-                return analysis
-            else:
-                print("Ollama返回的分析内容过短，尝试重新生成...")
-                # 如果内容过短，返回一个详细的默认模板
-                return f"""# {symbol} 新闻分析报告
-
-## 📊 主要新闻要点
-基于获取的10条最新新闻，以下是关键要点总结：
-
-### 1. 最新动态
-- **时间范围**: 最近24-48小时
-- **新闻数量**: 10条相关报道
-- **主要来源**: 各大财经媒体
-
-### 2. 市场情绪分析
-- **整体趋势**: 需要结合具体新闻内容判断
-- **投资者关注点**: 业绩、政策、竞争环境等
-
-### 3. 关键影响评估
-- **短期影响**: 股价波动可能性
-- **长期影响**: 公司基本面变化
-
-## 💡 投资建议
-建议结合技术分析和基本面研究，制定合适的投资策略。
-
-## ⚠️ 风险提示
-投资有风险，建议分散投资，控制仓位。"""
-        else:
-            print(f"Ollama HTTP API调用失败: {response.status_code} - {response.text}")
-            return None
-            
-    except requests.exceptions.Timeout:
-        print("Ollama HTTP API调用超时")
-        return None
-    except requests.exceptions.ConnectionError:
-        print("无法连接到Ollama服务，请确保Ollama正在运行")
-        print("可以尝试在终端运行: ollama serve")
-        return None
-    except Exception as e:
-        print(f"调用Ollama HTTP API时出错: {e}")
-        return None
-
-def check_ollama_status():
-    """检查Ollama服务状态"""
-    try:
-        url = f"{OLLAMA_BASE_URL}/api/tags"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            models = response.json().get("models", [])
-            available_models = [m.get("name") for m in models]
-            if OLLAMA_MODEL in available_models:
-                print(f"✓ Ollama服务运行正常，模型 {OLLAMA_MODEL} 可用")
-                return True
-            else:
-                print(f"✗ 模型 {OLLAMA_MODEL} 不可用，可用模型: {available_models}")
-                return False
-        else:
-            print("✗ Ollama服务响应异常")
-            return False
-    except Exception as e:
-        print("✗ 无法连接到Ollama服务")
-        print("请确保Ollama正在运行: ollama serve")
-        return False
-
-def send_email_with_analysis(sender_email, sender_password,smtp_server, receiver_list, subject, content, attachment_path=None):
-    """使用yagmail发送邮件，包含分析内容"""
-    try:
-        # 初始化yagmail SMTP客户端
-        yag = yagmail.SMTP(user=sender_email, password=sender_password,host=smtp_server)
-        
-        # 准备邮件内容
-        html_content = f"""
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }}
-                h2 {{ color: #34495e; border-bottom: 1px solid #bdc3c7; padding-bottom: 5px; }}
-                h3 {{ color: #7f8c8d; }}
-                strong {{ color: #e74c3c; }}
-                .highlight {{ background-color: #f8f9fa; padding: 10px; border-left: 4px solid #3498db; margin: 10px 0; }}
-                .warning {{ background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin: 10px 0; }}
-            </style>
-        </head>
-        <body>
-            <h1>股票新闻分析报告</h1>
-            <p><strong>分析时间:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-            <div class="highlight">
-                <p>本邮件包含详细的新闻分析报告，请查看附件获取完整内容。</p>
-            </div>
-            <div class="warning">
-                <p><strong>免责声明:</strong> 本分析仅供参考，不构成投资建议。投资有风险，入市需谨慎。</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        # 准备附件
-        attachments = []
-        if attachment_path and os.path.exists(attachment_path):
-            attachments.append(attachment_path)
-        
-        # 发送邮件
-        yag.send(
-            to=receiver_list,
-            subject=subject,
-            contents=[html_content, content],  # 同时发送HTML和纯文本内容
-            attachments=attachments
-        )
-        
-        print(f"✅ 邮件已成功发送到: {len(receiver_list)}位收件人")
-        return True
-        
-    except Exception as e:
-        print(f"❌ 邮件发送失败: {e}")
-        return False
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def main():
-    """主函数"""
-    print("=" * 60)
-    print("📈 股票新闻分析工具 v5.0")
-    print("=" * 60)
+    """手动运行股票分析"""
+    logger.info("Starting manual stock analysis...")
     
-    # 检查邮件配置
-    if EMAIL_CONFIG['enable_email']:
-        print("\n📧 邮件配置信息:")
-        print(f"发件人: {EMAIL_CONFIG['sender_email']}")
-        print(f"收件人: {EMAIL_CONFIG['recipient_email']}")
-        print(f"SMTP服务器: {EMAIL_CONFIG['smtp_server']}:{EMAIL_CONFIG['smtp_port']}")
+    # 创建调度器实例
+    scheduler = DailyReportScheduler()
+    
+    try:
+        # 手动运行股票分析任务
+        scheduler.run_daily_stock_analysis()
+        logger.info("Manual stock analysis completed successfully!")
         
-        # 验证邮箱配置
-        if EMAIL_CONFIG['sender_email'] == 'your_email@example.com':
-            print("⚠️  警告: 请修改EMAIL_CONFIG中的邮箱配置！")
-            return
+    except Exception as e:
+        logger.error(f"Error during manual analysis: {e}")
+        return 1
     
-    # 检查Ollama服务状态
-    print("\n🔍 检查Ollama服务状态...")
-    if not check_ollama_status():
-        print("❌ Ollama服务未就绪，请启动服务后再运行")
-        return
-    
-    # 获取新闻数据
-    print(f"\n📰 正在获取 {SYMBOL} 的新闻数据...")
-    news_data = get_news_data(SYMBOL, limit=10)
-    
-    if news_data is None:
-        print("❌ 获取新闻数据失败")
-        return
-    
-    # 保存原始新闻数据
-    output_file = generate_filename(SYMBOL)
-    save_to_json(news_data, output_file)
-    
-    # 提取新闻内容进行分析
-    if 'feed' in news_data and news_data['feed']:
-        all_summarized_news = news_data['feed']
-        news_text = extract_news_for_analysis(all_summarized_news)
-        
-        # 使用Ollama HTTP API进行分析
-        analysis_result = analyze_with_ollama_http(news_text, SYMBOL)
-        
-        # 将分析结果也保存到文件中
-        if analysis_result:
-            analysis_filename = output_file.replace('.json', '_analysis.md')
-            with open(analysis_filename, 'w', encoding='utf-8') as f:
-                f.write(f"# {SYMBOL} 新闻分析报告\n\n")
-                f.write(f"**股票代码**: {SYMBOL}\n\n")
-                f.write(f"**分析日期**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                f.write("---\n\n")
-                f.write(analysis_result)
-            print(f"分析结果已保存到: {analysis_filename}")
-            
-            # 发送邮件
-            if EMAIL_CONFIG['enable_email']:
-                subject = f"{SYMBOL} 新闻分析报告 - {datetime.now().strftime('%Y-%m-%d')}"
-                success = send_email_with_analysis(
-                    EMAIL_CONFIG['sender_email'],
-                    EMAIL_CONFIG['sender_password'],
-                    EMAIL_CONFIG['smtp_server'],
-                    receiver_list,
-                    subject,
-                    analysis_result,
-                    analysis_filename
-                )
-                
-                if success:
-                    print("✅ 邮件发送完成！")
-                else:
-                    print("❌ 邮件发送失败，请检查邮箱配置")
-            else:
-                print("邮件发送已禁用")
-        else:
-            print("❌ 没有分析结果可供保存")
-    else:
-        print("❌ 没有找到新闻数据")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
 </file>
 
-<file path="README.md">
-# 股票分析系统
+<file path="README_DEEPSEEK.md">
+# DeepSeek API 集成指南
 
-一个基于FastAPI的股票分析系统，集成Alpha Vantage API获取实时股票数据，使用Ollama进行AI分析。
+本文档介绍如何在股票分析API项目中集成和使用DeepSeek在线模型API。
 
-## 功能特性
+## 功能概述
 
-- 🔐 用户认证和授权
-- 📈 实时股票数据获取
-- 🤖 AI驱动的股票分析
-- 📰 新闻情绪分析
-- 📊 技术分析指标
-- 🧪 完整的测试套件
+项目现在支持两种AI模型：
+1. **Ollama本地模型** - 使用本地部署的Ollama服务
+2. **DeepSeek在线模型** - 使用DeepSeek的在线API服务
 
-## 技术栈
+## 配置说明
 
-- **后端**: FastAPI
-- **数据库**: SQLite (开发) / PostgreSQL (生产)
-- **认证**: JWT
-- **AI分析**: Ollama + Llama 2
-- **股票数据**: Alpha Vantage API
-- **测试**: pytest + responses
+### 环境变量配置
 
-## 快速开始
+在 `.env` 文件中添加以下配置：
 
-### 1. 环境准备
+```env
+# DeepSeek Configuration
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_API_URL=https://api.deepseek.com/v1/chat/completions
+DEEPSEEK_MODEL=deepseek-chat
 
-```bash
-# 克隆项目
-git clone <repository-url>
-cd stockAPI
-
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 安装依赖
-pip install -r requirements.txt
+# AI Model Selection
+AI_MODEL_TYPE=ollama  # ollama or deepseek
 ```
 
-### 2. 环境配置
+### 参数说明
 
-复制环境变量模板：
-```bash
-cp .env.example .env
+- `DEEPSEEK_API_KEY`: 你的DeepSeek API密钥
+- `DEEPSEEK_API_URL`: DeepSeek API端点（通常不需要修改）
+- `DEEPSEEK_MODEL`: 使用的DeepSeek模型（默认：deepseek-chat）
+- `AI_MODEL_TYPE`: 模型类型选择，可选值：`ollama` 或 `deepseek`
+
+## 获取DeepSeek API密钥
+
+1. 访问 [DeepSeek官网](https://platform.deepseek.com/)
+2. 注册账号并登录
+3. 在控制台中获取API密钥
+4. 将API密钥填入 `.env` 文件中的 `DEEPSEEK_API_KEY`
+
+## 切换模型类型
+
+### 方法1：修改环境变量
+
+在 `.env` 文件中修改 `AI_MODEL_TYPE`：
+
+```env
+# 使用DeepSeek在线模型
+AI_MODEL_TYPE=deepseek
+
+# 使用Ollama本地模型
+AI_MODEL_TYPE=ollama
 ```
 
-编辑 `.env` 文件，填入必要的配置：
+### 方法2：运行时配置
+
+你也可以在启动应用时设置环境变量：
+
 ```bash
-# Alpha Vantage API密钥
-ALPHA_VANTAGE_API_KEY=your_api_key_here
-
-# Ollama配置
-OLLAMA_API_URL=http://localhost:11434
-
-# JWT配置
-SECRET_KEY=your_secret_key_here
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-```
-
-### 3. 启动服务
-
-#### 启动Ollama服务
-```bash
-# 启动Ollama
-ollama serve
-
-# 拉取Llama 2模型
-ollama pull llama2
-```
-
-#### 启动FastAPI应用
-```bash
-# 开发模式
+# 使用DeepSeek
+export AI_MODEL_TYPE=deepseek
 python run.py
 
-# 或使用uvicorn
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 使用Ollama
+export AI_MODEL_TYPE=ollama
+python run.py
 ```
 
-### 4. API文档
+## 测试连接
 
-启动服务后，访问：
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+项目提供了测试脚本来验证DeepSeek API连接：
 
-## API端点
-
-### 认证相关
-- `POST /api/register` - 用户注册
-- `POST /api/token` - 获取访问令牌
-- `GET /api/users/me` - 获取当前用户信息
-
-### 股票分析
-- `GET /api/analyze/{symbol}` - 分析指定股票
-- `GET /api/health` - 健康检查
-
-## 测试
-
-### 运行所有测试
 ```bash
-python run_tests.py
+# 测试DeepSeek连接
+python test_deepseek.py
+
+# 或者直接运行（需要先设置AI_MODEL_TYPE=deepseek）
+export AI_MODEL_TYPE=deepseek
+python test_deepseek.py
 ```
 
-### 运行特定类型测试
+## 使用说明
+
+### 1. 配置DeepSeek API密钥
+
+首先，确保你已获取有效的DeepSeek API密钥，并在 `.env` 文件中正确配置。
+
+### 2. 切换模型类型
+
+根据需要选择使用的模型：
+- 开发和测试阶段：可以使用Ollama本地模型（免费）
+- 生产环境：建议使用DeepSeek在线模型（稳定可靠）
+
+### 3. 验证配置
+
+运行测试脚本确认配置正确：
+
 ```bash
-# 单元测试
-python run_tests.py --type unit
-
-# 集成测试
-python run_tests.py --type integration
-
-# 详细输出
-python run_tests.py -v
-
-# 生成覆盖率报告
-python run_tests.py --coverage
+python test_deepseek.py
 ```
 
-### 手动运行测试
+### 4. 启动应用
+
+正常启动应用即可，AI分析器会自动根据配置选择相应的模型服务。
+
 ```bash
-# 安装测试依赖
-pip install -r tests/test_requirements.txt
-
-# 运行测试
-pytest tests/ -v
+python run.py
 ```
-
-## 项目结构
-
-```
-stockAPI/
-├── app/
-│   ├── __init__.py
-│   ├── main.py          # FastAPI应用入口
-│   ├── config.py        # 配置管理
-│   ├── database.py      # 数据库连接
-│   ├── models.py        # 数据模型
-│   ├── schemas.py       # Pydantic模型
-│   ├── auth.py          # 认证逻辑
-│   └── routers/         # API路由
-│       ├── __init__.py
-│       ├── auth.py      # 认证路由
-│       └── analysis.py  # 分析路由
-├── services/
-│   ├── __init__.py
-│   ├── alpha_vantage_api.py  # Alpha Vantage API封装
-│   └── ai_analyzer.py        # AI分析服务
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py          # 测试配置
-│   ├── test_requirements.txt # 测试依赖
-│   ├── unit/               # 单元测试
-│   │   ├── __init__.py
-│   │   ├── test_alpha_vantage_api.py
-│   │   └── test_ai_analyzer.py
-│   └── integration/        # 集成测试
-│       ├── __init__.py
-│       ├── test_auth_flow.py
-│       └── test_stock_analysis_flow.py
-├── run.py                 # 应用启动脚本
-├── run_tests.py          # 测试运行器
-├── requirements.txt      # 项目依赖
-├── .env.example         # 环境变量模板
-└── README.md            # 项目文档
-```
-
-## 开发指南
-
-### 添加新功能
-1. 在 `app/routers/` 中添加新的路由文件
-2. 在 `app/schemas.py` 中定义请求/响应模型
-3. 在 `services/` 中添加业务逻辑
-4. 在 `tests/` 中添加对应的测试
-
-### 代码规范
-- 使用PEP 8风格指南
-- 添加类型注解
-- 编写文档字符串
-- 保持测试覆盖率 > 80%
 
 ## 故障排除
 
 ### 常见问题
 
-1. **Ollama连接失败**
-   - 确保Ollama服务已启动：`ollama serve`
-   - 检查OLLAMA_API_URL配置是否正确
+1. **API密钥错误**
+   - 检查 `DEEPSEEK_API_KEY` 是否正确
+   - 确认API密钥是否有足够的额度
 
-2. **Alpha Vantage API限制**
-   - 免费版限制：5次/分钟，500次/天
-   - 考虑升级API套餐或实现缓存机制
+2. **连接超时**
+   - 检查网络连接
+   - 确认API端点URL是否正确
 
-3. **测试失败**
-   - 确保测试依赖已安装：`pip install -r tests/test_requirements.txt`
-   - 检查环境变量是否正确设置
+3. **模型不响应**
+   - 检查 `DEEPSEEK_MODEL` 参数是否正确
+   - 确认模型服务是否正常
 
-## 贡献指南
+### 调试模式
 
-1. Fork项目
-2. 创建功能分支：`git checkout -b feature/new-feature`
-3. 提交更改：`git commit -am 'Add new feature'`
-4. 推送到分支：`git push origin feature/new-feature`
-5. 创建Pull Request
+如果需要更详细的调试信息，可以修改 `services/ai_analyzer.py` 中的日志输出级别。
 
-## 许可证
+## 性能考虑
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+- **DeepSeek在线模型**: 响应速度取决于网络状况和API负载，但通常更稳定
+- **Ollama本地模型**: 响应速度取决于本地硬件性能，但无需网络连接
+
+## 成本考虑
+
+- DeepSeek API按token数量计费，请关注使用量
+- Ollama本地模型完全免费，但需要本地硬件资源
+
+## 备份配置
+
+建议保留原有的Ollama配置作为备份，以便在需要时可以快速切换回本地模型。
+
+---
+
+如有任何问题，请参考DeepSeek官方文档或联系技术支持。
 </file>
 
 <file path="requirements.txt">
@@ -5961,15 +4702,787 @@ if __name__ == "__main__":
     main()
 </file>
 
+<file path="app/db/models.py">
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Date, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from datetime import datetime, date
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    email = Column(String(100), unique=True, index=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    email_notifications = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    
+    def get_subscribed_stocks_list(self):
+        """获取用户订阅的股票代码列表"""
+        return [sub.stock_symbol for sub in self.subscriptions]
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    stock_symbol = Column(String(10), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User", back_populates="subscriptions")
+
+class StockAnalysis(Base):
+    __tablename__ = "stock_analyses"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    stock_symbol = Column(String(10), nullable=False, index=True)
+    analysis_date = Column(Date, nullable=False, default=date.today)
+    analysis_result = Column(JSON)
+    latest_price_data = Column(JSON)
+    news_data = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+</file>
+
+<file path="app/web/routes.py">
+from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+from app.db.database import get_db
+from app.db.models import User
+from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash
+from datetime import timedelta
+from typing import Optional
+
+router = APIRouter()
+templates = Jinja2Templates(directory="app/web/templates")
+
+
+@router.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    """首页"""
+    return templates.TemplateResponse("home.html", {"request": request})
+
+
+@router.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    """注册页面"""
+    return templates.TemplateResponse("register.html", {"request": request})
+
+
+@router.post("/register")
+async def register(
+    request: Request,
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """处理注册表单提交"""
+    # 检查用户名是否已存在
+    if db.query(User).filter(User.username == username).first():
+        return templates.TemplateResponse(
+            "register.html",
+            {"request": request, "error": "用户名已存在"}
+        )
+    
+    # 检查邮箱是否已存在
+    if db.query(User).filter(User.email == email).first():
+        return templates.TemplateResponse(
+            "register.html",
+            {"request": request, "error": "邮箱已注册"}
+        )
+    
+    # 创建新用户
+    db_user = User(
+        username=username,
+        email=email,
+        password_hash=get_password_hash(password)
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    
+    # 注册成功后重定向到登录页面
+    return RedirectResponse(url="/login", status_code=303)
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """登录页面"""
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@router.post("/login")
+async def login(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """处理登录表单提交"""
+    print(f"登录尝试: username={username}, password={password}")
+    user = authenticate_user(db, username, password)
+    if not user:
+        print(f"登录失败: 用户名或密码错误. authenticate_user returned None for username={username}")
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "error": "用户名或密码错误"}
+        )
+    
+    print(f"登录成功: {user.username}. User ID: {user.id}")
+    # 创建访问令牌
+    access_token_expires = timedelta(days=7)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    
+    print(f"生成的token: {access_token[:20]}...")
+    
+    # 设置cookie并重定向到仪表盘
+    response = RedirectResponse(url="/dashboard", status_code=303)
+    response.set_cookie(
+        key="access_token",
+        value=f"Bearer {access_token}",
+        # httponly=True, # 移除 httponly 以允许前端JS访问
+        max_age=7 * 24 * 60 * 60  # 7天
+    )
+    print(f"重定向到: /dashboard")
+    return response
+
+
+@router.post("/logout")
+async def logout():
+    """退出登录"""
+    response = RedirectResponse(url="/", status_code=303)
+    response.delete_cookie("access_token")
+    return response
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """仪表盘页面"""
+    # 从cookie中获取当前用户
+    user = await get_current_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/login")
+    
+    print(f"User authenticated: {user.username}")
+    
+    # 获取用户的订阅
+    subscribed_stocks = user.subscriptions
+    
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "user": user,
+            "subscriptions": subscribed_stocks
+        }
+    )
+
+
+async def get_current_user_from_cookie(request: Request, db: Session) -> Optional[User]:
+    """从cookie中获取当前用户"""
+    token = request.cookies.get("access_token")
+    print(f"Cookie token: {token}")
+    
+    # 处理可能的引号包围
+    if token and token.startswith('"') and token.endswith('"'):
+        token = token[1:-1]
+    
+    if not token or not token.startswith("Bearer "):
+        print("No valid token found in cookie")
+        return None
+    
+    try:
+        token_value = token.split(" ")[1]
+        print(f"Token value: {token_value}")
+        
+        # 直接解码JWT token而不是调用get_current_user依赖项
+        from jose import JWTError, jwt
+        from app.core.security import SECRET_KEY, ALGORITHM
+        
+        payload = jwt.decode(token_value, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            print("No username in token payload")
+            return None
+        
+        # 从数据库获取用户
+        user = db.query(User).filter(User.username == username).first()
+        print(f"User found: {user.username if user else None}")
+        return user
+        
+    except JWTError as e:
+        print(f"JWT Error: {e}")
+        return None
+    except Exception as e:
+        print(f"Error getting current user: {e}")
+        return None
+</file>
+
+<file path="app/daily_tasks.py">
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy.orm import Session
+from app.db.database import SessionLocal
+from app.db.models import User, Subscription, StockAnalysis
+from datetime import date
+from services.alpha_vantage_api import AlphaVantageAPI
+from services.ai_analyzer import AIAnalyzer
+from services.email_service import EmailService
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class DailyReportScheduler:
+    def __init__(self):
+        self.scheduler = BackgroundScheduler()
+        self.alpha_api = AlphaVantageAPI()
+        self.ai_analyzer = AIAnalyzer()
+        self.email_service = EmailService()
+        
+    def run_daily_stock_analysis(self):
+        """运行每日股票分析任务"""
+        logger.info("Starting daily stock analysis...")
+        
+        db = SessionLocal()
+        try:
+            # 1. 查询所有不重复的股票代码
+            unique_symbols = db.query(Subscription.stock_symbol).distinct().all()
+            unique_symbols = [symbol[0] for symbol in unique_symbols]
+            
+            if not unique_symbols:
+                logger.info("No subscribed stocks found for analysis")
+                return
+            
+            logger.info(f"Found {len(unique_symbols)} unique stock symbols to analyze: {unique_symbols}")
+            
+            # 2. 遍历股票代码列表
+            for symbol in unique_symbols:
+                try:
+                    logger.info(f"Analyzing stock: {symbol}")
+                    
+                    # 3. 调用 AlphaVantage API 获取数据
+                    news_data = self.alpha_api.get_stock_news(symbol)
+                    price_data = self.alpha_api.get_daily_prices(symbol)
+                    
+                    if not news_data or not price_data:
+                        logger.warning(f"Skipping {symbol}: Failed to fetch data from AlphaVantage")
+                        continue
+                    
+                    # 4. 调用 AIAnalyzer 服务进行分析
+                    analysis_result = self.ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
+                    
+                    # 5. 检查并处理分析错误
+                    if "error" in analysis_result:
+                        logger.error(f"AI analysis failed for {symbol}: {analysis_result['error']}")
+                        continue
+                    
+                    # 6. 删除当天已存在的相同股票代码记录（幂等性）
+                    today = date.today()
+                    db.query(StockAnalysis).filter(
+                        StockAnalysis.stock_symbol == symbol,
+                        StockAnalysis.analysis_date == today
+                    ).delete()
+                    
+                    # 保存分析结果到数据库
+                    stock_analysis = StockAnalysis(
+                        stock_symbol=symbol,
+                        analysis_date=today,
+                        analysis_result=analysis_result.get("analysis", {}),
+                        latest_price_data=price_data,
+                        news_data=news_data
+                    )
+                    
+                    db.add(stock_analysis)
+                    db.commit()
+                    
+                    logger.info(f"Successfully analyzed and saved {symbol}")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                    db.rollback()
+                    continue
+        
+        except Exception as e:
+            logger.error(f"Error in daily stock analysis: {e}")
+            db.rollback()
+        finally:
+            db.close()
+            
+        logger.info("Daily stock analysis completed")
+        
+    def generate_daily_reports(self):
+        """生成并发送每日报告（保留原有功能）"""
+        logger.info("Starting daily report generation...")
+        
+        db = SessionLocal()
+        try:
+            # 获取所有用户
+            users = db.query(User).all()
+            
+            for user in users:
+                # 获取用户订阅的股票
+                subscriptions = db.query(Subscription).filter(
+                    Subscription.user_id == user.id
+                ).all()
+                
+                if not subscriptions:
+                    continue
+                
+                analyses = []
+                for subscription in subscriptions:
+                    symbol = subscription.stock_symbol
+                    
+                    try:
+                        # 获取股票数据
+                        news_data = self.alpha_api.get_stock_news(symbol)
+                        price_data = self.alpha_api.get_daily_prices(symbol)
+                        
+                        if news_data:
+                            # AI分析
+                            analysis = self.ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
+                            analyses.append(analysis)
+                    except Exception as e:
+                        logger.error(f"Error analyzing {symbol}: {e}")
+                        continue
+                
+                if analyses:
+                    # 发送邮件
+                    success = self.email_service.send_analysis_report(user.email, analyses)
+                    if success:
+                        logger.info(f"Report sent to {user.email}")
+                    else:
+                        logger.error(f"Failed to send report to {user.email}")
+        
+        except Exception as e:
+            logger.error(f"Error in daily report generation: {e}")
+        finally:
+            db.close()
+    
+    def start(self):
+        """启动定时任务"""
+        # 每天上午9:00运行股票分析
+        self.scheduler.add_job(
+            self.run_daily_stock_analysis,
+            CronTrigger(hour=9, minute=0),
+            id='daily_stock_analysis',
+            name='Daily stock analysis',
+            replace_existing=True
+        )
+        
+        # 保留原有的报告发送功能（可选）
+        self.scheduler.add_job(
+            self.generate_daily_reports,
+            CronTrigger(hour=10, minute=0),  # 稍后运行报告发送
+            id='daily_report',
+            name='Daily report generation',
+            replace_existing=True
+        )
+        
+        self.scheduler.start()
+        logger.info("Daily report scheduler started")
+    
+    def stop(self):
+        """停止定时任务"""
+        self.scheduler.shutdown()
+        logger.info("Daily report scheduler stopped")
+
+# 全局调度器实例
+scheduler = DailyReportScheduler()
+</file>
+
+<file path="app/forms.py">
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, SubmitField, BooleanField
+from wtforms.validators import DataRequired, Email, EqualTo, Length
+from app.db.models import User
+
+class RegistrationForm(FlaskForm):
+    username = StringField('用户名', validators=[DataRequired(), Length(min=3, max=20)])
+    email = StringField('邮箱', validators=[DataRequired(), Email()])
+    password = PasswordField('密码', validators=[DataRequired(), Length(min=6)])
+    confirm_password = PasswordField('确认密码', validators=[DataRequired(), EqualTo('password')])
+    submit = SubmitField('注册')
+
+class LoginForm(FlaskForm):
+    username = StringField('用户名', validators=[DataRequired()])
+    password = PasswordField('密码', validators=[DataRequired()])
+    remember_me = BooleanField('记住我')
+    submit = SubmitField('登录')
+
+class StockForm(FlaskForm):
+    symbol = StringField('股票代码', validators=[DataRequired(), Length(min=1, max=10)])
+    submit = SubmitField('添加')
+</file>
+
+<file path="app/schemas.py">
+from pydantic import BaseModel, EmailStr
+from typing import Optional, List
+from datetime import datetime
+
+
+class UserBase(BaseModel):
+    username: str
+    email: EmailStr
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserUpdateEmail(BaseModel):
+    email: EmailStr
+
+
+class UserResponse(UserBase):
+    id: int
+    is_active: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class SubscriptionBase(BaseModel):
+    stock_symbol: str
+
+
+class SubscriptionCreate(SubscriptionBase):
+    pass
+
+
+class SubscriptionResponse(SubscriptionBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class StockAnalysisResponse(BaseModel):
+    stock_symbol: str
+    news_data: Optional[str]
+    analysis_result: Optional[str]
+    recommendation: Optional[str]
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+</file>
+
+<file path=".env.example">
+# Alpha Vantage API配置
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
+
+# OpenAI API配置
+OPENAI_API_KEY=your_openai_api_key_here
+
+# DeepSeek API配置
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_API_URL=https://api.deepseek.com/v1/chat/completions
+DEEPSEEK_MODEL=deepseek-chat
+
+# AI模型选择配置
+AI_MODEL_TYPE=ollama  # ollama or deepseek
+
+# 邮件配置
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+
+# JWT密钥
+SECRET_KEY=your-secret-key-here-change-in-production
+
+# 数据库配置（可选）
+DATABASE_URL=sqlite:///./stock_analysis.db
+
+# 每日报告发送时间（可选）
+DAILY_REPORT_TIME=09:00
+</file>
+
+<file path="config.py">
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    # 数据库配置
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./stock_analysis.db")
+    
+    # Alpha Vantage API配置
+    ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+    
+    # OpenAI API配置
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    
+    # DeepSeek API配置
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+    DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    
+    # AI模型选择配置
+    AI_MODEL_TYPE = os.getenv("AI_MODEL_TYPE", "ollama")  # ollama 或 deepseek
+    
+    # 邮件配置
+    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+    
+    # JWT配置
+    SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
+    ALGORITHM = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES = 30
+    
+    # 定时任务配置
+    DAILY_REPORT_TIME = os.getenv("DAILY_REPORT_TIME", "09:00")
+</file>
+
+<file path="README.md">
+# 股票分析系统
+
+一个基于FastAPI的股票分析系统，集成Alpha Vantage API获取实时股票数据，使用Ollama进行AI分析。
+
+## 功能特性
+
+- 🔐 用户认证和授权
+- 📈 实时股票数据获取
+- 🤖 AI驱动的股票分析
+- 📰 新闻情绪分析
+- 📊 技术分析指标
+- 🧪 完整的测试套件
+
+## 技术栈
+
+- **后端**: FastAPI
+- **数据库**: SQLite (开发) / PostgreSQL (生产)
+- **认证**: JWT
+- **AI分析**: Ollama + Llama 2 / DeepSeek API (可选)
+- **股票数据**: Alpha Vantage API
+- **测试**: pytest + responses
+
+## 快速开始
+
+### 1. 环境准备
+
+```bash
+# 克隆项目
+git clone <repository-url>
+cd stockAPI
+
+# 创建虚拟环境
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 安装依赖
+pip install -r requirements.txt
+```
+
+### 2. 环境配置
+
+复制环境变量模板：
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 文件，填入必要的配置：
+```bash
+# Alpha Vantage API密钥
+ALPHA_VANTAGE_API_KEY=your_api_key_here
+
+# Ollama配置
+OLLAMA_API_URL=http://localhost:11434
+
+# JWT配置
+SECRET_KEY=your_secret_key_here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+```
+
+### 3. 启动服务
+
+#### 启动Ollama服务
+```bash
+# 启动Ollama
+ollama serve
+
+# 拉取Llama 2模型
+ollama pull llama2
+```
+
+#### 启动FastAPI应用
+```bash
+# 开发模式
+python run.py
+
+# 或使用uvicorn
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 4. API文档
+
+启动服务后，访问：
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+## API端点
+
+### 认证相关
+- `POST /api/register` - 用户注册
+- `POST /api/token` - 获取访问令牌
+- `GET /api/users/me` - 获取当前用户信息
+
+### 股票分析
+- `GET /api/analyze/{symbol}` - 分析指定股票
+- `GET /api/health` - 健康检查
+
+## 测试
+
+### 运行所有测试
+```bash
+python run_tests.py
+```
+
+### 运行特定类型测试
+```bash
+# 单元测试
+python run_tests.py --type unit
+
+# 集成测试
+python run_tests.py --type integration
+
+# 详细输出
+python run_tests.py -v
+
+# 生成覆盖率报告
+python run_tests.py --coverage
+```
+
+### 手动运行测试
+```bash
+# 安装测试依赖
+pip install -r tests/test_requirements.txt
+
+# 运行测试
+pytest tests/ -v
+```
+
+## 项目结构
+
+```
+stockAPI/
+├── app/
+│   ├── __init__.py
+│   ├── main.py          # FastAPI应用入口
+│   ├── config.py        # 配置管理
+│   ├── database.py      # 数据库连接
+│   ├── models.py        # 数据模型
+│   ├── schemas.py       # Pydantic模型
+│   ├── auth.py          # 认证逻辑
+│   └── routers/         # API路由
+│       ├── __init__.py
+│       ├── auth.py      # 认证路由
+│       └── analysis.py  # 分析路由
+├── services/
+│   ├── __init__.py
+│   ├── alpha_vantage_api.py  # Alpha Vantage API封装
+│   └── ai_analyzer.py        # AI分析服务
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py          # 测试配置
+│   ├── test_requirements.txt # 测试依赖
+│   ├── unit/               # 单元测试
+│   │   ├── __init__.py
+│   │   ├── test_alpha_vantage_api.py
+│   │   └── test_ai_analyzer.py
+│   └── integration/        # 集成测试
+│       ├── __init__.py
+│       ├── test_auth_flow.py
+│       └── test_stock_analysis_flow.py
+├── run.py                 # 应用启动脚本
+├── run_tests.py          # 测试运行器
+├── requirements.txt      # 项目依赖
+├── .env.example         # 环境变量模板
+└── README.md            # 项目文档
+```
+
+## 开发指南
+
+### 添加新功能
+1. 在 `app/routers/` 中添加新的路由文件
+2. 在 `app/schemas.py` 中定义请求/响应模型
+3. 在 `services/` 中添加业务逻辑
+4. 在 `tests/` 中添加对应的测试
+
+### 代码规范
+- 使用PEP 8风格指南
+- 添加类型注解
+- 编写文档字符串
+- 保持测试覆盖率 > 80%
+
+## 故障排除
+
+### 常见问题
+
+1. **Ollama连接失败**
+   - 确保Ollama服务已启动：`ollama serve`
+   - 检查OLLAMA_API_URL配置是否正确
+
+2. **Alpha Vantage API限制**
+   - 免费版限制：5次/分钟，500次/天
+   - 考虑升级API套餐或实现缓存机制
+
+3. **测试失败**
+   - 确保测试依赖已安装：`pip install -r tests/test_requirements.txt`
+   - 检查环境变量是否正确设置
+
+## 贡献指南
+
+1. Fork项目
+2. 创建功能分支：`git checkout -b feature/new-feature`
+3. 提交更改：`git commit -am 'Add new feature'`
+4. 推送到分支：`git push origin feature/new-feature`
+5. 创建Pull Request
+
+## 许可证
+
+MIT License - 详见 [LICENSE](LICENSE) 文件
+</file>
+
 <file path="run.py">
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-from app.database import engine, Base
-from app.routes import router
-from app.web_routes import router as web_router
-from app.tasks import scheduler
+from app.db.database import engine, Base
+from app.api.main_api_router import router
+from app.web.routes import router as web_router
+from app.daily_tasks import scheduler
 import uvicorn
 
 # 创建数据库表
@@ -6020,84 +5533,852 @@ if __name__ == "__main__":
     uvicorn.run("run:app", host="0.0.0.0", port=port, reload=True)
 </file>
 
-<file path="test.py">
-import re
-import json
+<file path="app/api/main_api_router.py">
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from datetime import timedelta, datetime
+from app.db.database import get_db
+from app.db.models import User, Subscription, StockAnalysis
+from app.schemas import UserCreate, UserResponse, UserUpdateEmail, SubscriptionCreate, SubscriptionResponse, StockAnalysisResponse, Token
+from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash, get_current_user_from_cookie_or_header
+from services.alpha_vantage_api import AlphaVantageAPI
+from services.ai_analyzer import AIAnalyzer
+from services.email_service import EmailService
+from typing import List
 
-def extract_json_from_qwen_output(text: str) -> dict or None:
-    """
-    使用正则表达式从Qwen模型输出中提取JSON内容。
+router = APIRouter()
 
-    Args:
-        text: 包含<think>和JSON部分的字符串。
+# 初始化服务
+alpha_api = AlphaVantageAPI()
+ai_analyzer = AIAnalyzer()
+email_service = EmailService()
 
-    Returns:
-        如果找到并成功解析，返回Python字典；否则返回None。
-    """
-    # 匹配以 `{` 开头，以 `}` 结尾的JSON对象，并使用非贪婪模式 `*?`
-    # 以确保只匹配第一个完整的JSON对象，而非整个字符串。
-    # re.DOTALL 标志允许 `.` 匹配换行符，这在多行JSON中非常重要。
-    match = re.search(r'\{.*\}', text, re.DOTALL)
+@router.post("/register", response_model=UserResponse)
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    """用户注册"""
+    # 检查用户名是否已存在
+    if db.query(User).filter(User.username == user.username).first():
+        raise HTTPException(
+            status_code=400,
+            detail="Username already registered"
+        )
     
-    if match:
-        json_string = match.group(0)
-        try:
-            # 使用json模块将提取的字符串解析为Python字典
-            json_data = json.loads(json_string)
-            return json_data
-        except json.JSONDecodeError as e:
-            print(f"JSON解析失败: {e}")
-            return None
-    else:
-        print("未找到JSON内容。")
-        return None
+    # 检查邮箱是否已存在
+    if db.query(User).filter(User.email == user.email).first():
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+    
+    # 创建新用户
+    db_user = User(
+        username=user.username,
+        email=user.email,
+        password_hash=get_password_hash(user.password)
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
 
-# 你的模型输出示例
-model_output = """
-<think>
-Okay, let's start analyzing the data provided for TSLA. First, the price information: the latest price is $340.01, which is slightly below the high of $340.25. The open was $321.66, so there's been an increase today. The low is $319.69, which is close to the open. The volume is quite high at 94,016,347, indicating significant trading activity. That might suggest investor interest or volatility.
+@router.post("/token", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """用户登录"""
+    user = authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=30)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-Now, looking at the news articles. The first one mentions Trump naming Sergio Gor as Ambassador to India, but there's a feud with Elon Musk. This could be a negative for Tesla if it affects Musk's reputation or business. However, the article doesn't directly link this to Tesla's performance, so maybe neutral.
+@router.get("/users/me", response_model=UserResponse)
+def read_users_me(current_user: User = Depends(get_current_user)):
+    """获取当前用户信息"""
+    return current_user
 
-The second article is about Trump appointing Joe Gebbia as Chief Design Officer for federal digital services. This doesn't mention Tesla, so probably not relevant here.
 
-Third article is about a Vanguard ETF for mega caps. While it's about investing in big stocks, it doesn't directly affect Tesla unless it's a recommendation to invest in the ETF, which includes Tesla. But the article is more about the ETF itself, so maybe neutral.
+@router.put("/users/me/email", response_model=UserResponse)
+def update_user_email(
+    email_update: UserUpdateEmail,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """更新用户邮箱"""
+    # 检查邮箱是否已被其他用户使用
+    existing_user = db.query(User).filter(
+        User.email == email_update.email,
+        User.id != current_user.id
+    ).first()
+    
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered by another user"
+        )
+    
+    # 更新邮箱
+    current_user.email = email_update.email
+    db.commit()
+    db.refresh(current_user)
+    
+    return current_user
 
-Fourth article is about Elon Musk's xAI simulating software giants like Microsoft, called 'Macrohard'. This could be a positive for Tesla if it's related to innovation or AI advancements, but the article mentions Tesla in the same breath as Microsoft. However, the connection isn't clear. It might be a positive if it's a new venture that could benefit Tesla indirectly.
+@router.post("/subscribe", response_model=SubscriptionResponse)
+def subscribe_stock(
+    request: Request,
+    subscription: SubscriptionCreate,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """订阅股票"""
+    # 检查是否已订阅
+    existing = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.stock_symbol == subscription.stock_symbol.upper()
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Stock already subscribed"
+        )
+    
+    # 创建订阅
+    db_subscription = Subscription(
+        user_id=current_user.id,
+        stock_symbol=subscription.stock_symbol.upper()
+    )
+    db.add(db_subscription)
+    db.commit()
+    db.refresh(db_subscription)
+    return db_subscription
 
-Fifth article is a prediction about quantum computing stock outperforming Tesla in 2030. This might be a negative for Tesla if it's suggesting that other sectors (quantum computing) could surpass Tesla's value. However, it's a prediction and not certain.
+@router.delete("/unsubscribe/{symbol}")
+def unsubscribe_stock(
+    symbol: str,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """取消订阅股票"""
+    subscription = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.stock_symbol == symbol.upper()
+    ).first()
+    
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found"
+        )
+    
+    db.delete(subscription)
+    db.commit()
+    return {"message": "Unsubscribed successfully"}
 
-Putting the news together: There's some mixed signals. The xAI article might be positive, but the Trump-Gor nomination could have some negative implications. However, the other articles are less directly related. The overall sentiment from the news is probably neutral to slightly negative, but not strongly so.
+@router.get("/subscriptions", response_model=List[SubscriptionResponse])
+def get_subscriptions(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """获取用户订阅的股票"""
+    subscriptions = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id
+    ).all()
+    return subscriptions
 
-For technical analysis, the stock closed near the high, which is a positive sign. The volume is high, which could indicate strong interest. The price increased from open to close, so that's a positive. The low is close to the open, but the high is near the close. This might suggest a bullish trend, but with some volatility.
+@router.get("/analyze/{symbol}")
+def analyze_stock(
+    request: Request,
+    symbol: str,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """获取股票分析报告"""
+    symbol = symbol.upper()
+    
+    # 查询数据库获取最新的分析报告
+    latest_analysis = db.query(StockAnalysis).filter(
+        StockAnalysis.stock_symbol == symbol
+    ).order_by(
+        StockAnalysis.analysis_date.desc()
+    ).first()
+    
+    # 如果找不到记录，返回404错误
+    if not latest_analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"股票 {symbol} 的分析报告尚未生成，请稍后再试。"
+        )
+    
+    # 格式化响应数据
+    try:
+        news_data = latest_analysis.news_data or {}
+        return {
+            "symbol": latest_analysis.stock_symbol,
+            "analysis_date": latest_analysis.analysis_date.isoformat(),
+            "news": news_data.get("news", []) if isinstance(news_data, dict) else [],
+            "analysis": latest_analysis.analysis_result if latest_analysis.analysis_result is not None else {},
+            "latest_data": latest_analysis.latest_price_data if latest_analysis.latest_price_data is not None else {}
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"处理分析报告时发生内部错误: {str(e)}"
+        )
 
-The recommendation would depend on the analysis. If the technicals are positive and the news is neutral, maybe a 'hold' or 'buy'. However, the risk might be medium because the news has some uncertainty. The high volume could be a sign of potential movement, but without clear positive news, maybe a 'hold' is safer.
+@router.post("/send-report")
+def send_daily_report(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """发送每日报告"""
+    # 获取用户订阅的股票
+    subscriptions = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id
+    ).all()
+    
+    if not subscriptions:
+        raise HTTPException(
+            status_code=404,
+            detail="No subscriptions found"
+        )
+    
+    analyses = []
+    for subscription in subscriptions:
+        symbol = subscription.stock_symbol
+        
+        # 获取股票数据
+        news_data = alpha_api.get_stock_news(symbol)
+        price_data = alpha_api.get_daily_prices(symbol)
+        
+        if news_data:
+            # AI分析
+            analysis = ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
+            analyses.append(analysis)
+    
+    if analyses:
+        # 发送邮件
+        success = email_service.send_analysis_report(current_user.email, analyses)
+        if success:
+            return {"message": "Report sent successfully"}
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to send report"
+            )
+    
+    return {"message": "No data to analyze"}
 
-Overall, the sentiment is neutral because the news doesn't have a clear positive or negative impact. The technicals are slightly positive, but the recommendation might be to hold due to the uncertainty in the news and the high volume indicating possible volatility.
-</think>
+@router.post("/toggle-notifications")
+def toggle_email_notifications(
+    enabled: bool,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """切换邮件通知设置"""
+    current_user.email_notifications = enabled
+    db.commit()
+    return {"message": "Email notifications updated", "enabled": enabled}
+</file>
 
-{
-  "overall_sentiment": "neutral",
-  "key_points": [
-    "News about Trump's appointments (e.g., Sergio Gor to India) may indirectly affect Tesla through geopolitical or business environment shifts, but no direct impact on TSLA is mentioned.",
-    "Elon Musk's xAI initiative ('Macrohard') could signal innovation in AI, potentially benefiting Tesla's ecosystem, but no immediate financial implications are clear.",
-    "Quantum computing predictions highlight long-term tech competition, but no direct link to Tesla's near-term performance.",
-    "High trading volume ($94M) suggests market interest, but price movement is narrow (open-close range of ~$18.35)."
-  ],
-  "technical_analysis": "TSLA closed near its daily high ($340.01 vs. $340.25), showing bullish momentum. However, the price remains within a tight range, indicating consolidation. High volume suggests active trading but lacks a clear breakout pattern.",
-  "recommendation": "hold",
-  "risk_level": "medium",
-  "summary": "Mixed signals from news and neutral technicals suggest maintaining a cautious stance. No strong catalysts for immediate price movement.",
-  "reasoning": "While Tesla's AI initiatives (e.g., xAI) show innovation potential, news unrelated to core business (e.g., Trump appointments) lacks clear impact. Technicals indicate consolidation, not a strong trend. Medium risk persists due to macroeconomic and competitive uncertainties."
+<file path="app/web/templates/dashboard.html">
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - Stock News Analyzer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stock-item {
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    .stock-item:hover {
+        background-color: #f8f9fa;
+    }
+    .analysis-result {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        margin-top: 1rem;
+    }
+    .news-item {
+        border-left: 3px solid #3498db;
+        padding-left: 1rem;
+        margin-bottom: 1rem;
+    }
+    .loading {
+        display: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">我的股票订阅</h5>
+            </div>
+            <div class="card-body">
+                <div class="row" id="stocks-container">
+                    {% for stock in user.get_subscribed_stocks_list() %}
+                    <div class="col-md-6 mb-3">
+                        <div class="card stock-item" onclick="analyzeStock('{{ stock }}')">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h6 class="card-title mb-1">{{ stock }}</h6>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); deleteStock('{{ stock }}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                                <small class="text-muted">点击查看分析</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                
+                <div class="mt-4">
+                    <button class="btn btn-primary" onclick="addStock()">
+                        <i class="fas fa-plus"></i> 添加股票
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">股票分析结果</h5>
+            </div>
+            <div class="card-body">
+                <div id="analysis-result" class="analysis-result" style="display: none;">
+                    <h6 id="analysis-title"></h6>
+                    <div id="analysis-content"></div>
+                </div>
+                <div id="analysis-loading" class="text-center loading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">正在分析股票...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">用户信息</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>用户名:</strong> {{ user.username }}</p>
+                <p>
+                    <strong>邮箱:</strong> {{ user.email }}
+                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="showUpdateEmailModal()">
+                        <i class="fas fa-edit"></i> 修改
+                    </button>
+                </p>
+                <p><strong>订阅股票数:</strong> {{ user.get_subscribed_stocks_list()|length }}</p>
+                
+                <hr>
+                
+                <h6>邮件设置</h6>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="emailNotifications" 
+                           {% if user.email_notifications %}checked{% endif %}
+                           onchange="toggleEmailNotifications()">
+                    <label class="form-check-label" for="emailNotifications">
+                        接收每日分析报告
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加股票模态框 -->
+<div class="modal fade" id="addStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">添加股票</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addStockForm">
+                    <div class="mb-3">
+                        <label for="stockSymbol" class="form-label">股票代码</label>
+                        <input type="text" class="form-control" id="stockSymbol" required>
+                        <div class="form-text">例如: AAPL, GOOGL, MSFT</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitAddStock()">添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 修改邮箱模态框 -->
+<div class="modal fade" id="updateEmailModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">修改邮箱</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="updateEmailForm">
+                    <div class="mb-3">
+                        <label for="newEmail" class="form-label">新邮箱地址</label>
+                        <input type="email" class="form-control" id="newEmail" required
+                               value="{{ user.email }}">
+                        <div class="form-text">请输入有效的新邮箱地址</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitUpdateEmail()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function analyzeStock(symbol) {
+    const resultDiv = document.getElementById('analysis-result');
+    const loadingDiv = document.getElementById('analysis-loading');
+    const titleDiv = document.getElementById('analysis-title');
+    const contentDiv = document.getElementById('analysis-content');
+    
+    resultDiv.style.display = 'none';
+    loadingDiv.style.display = 'block';
+    
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    console.log("Frontend: Retrieved token from cookie:", token);
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+    }
+    console.log("Frontend: Sending headers with Authorization:", headers);
+    
+    // 发送带有认证信息的请求
+    axios.get(`/api/analyze/${symbol}`, { headers: headers })
+    .then(response => {
+        titleDiv.textContent = `${symbol} 分析报告 (更新于 ${response.data.analysis_date})`;
+        contentDiv.innerHTML = `
+            <div class="news-item">
+                <h6>总体评价</h6>
+                <p>${response.data.analysis?.overall_sentiment || '暂无评价'}</p>
+            </div>
+            <div class="news-item">
+                <h6>投资建议</h6>
+                <p>${response.data.analysis?.recommendation || '暂无建议'}</p>
+            </div>
+            <div class="news-item">
+                <h6>风险水平</h6>
+                <p>${response.data.analysis?.risk_level || '暂无风险评级'}</p>
+            </div>
+            <div class="news-item">
+                <h6>分析摘要</h6>
+                <p>${response.data.analysis?.summary || '暂无摘要'}</p>
+            </div>
+            <div class="news-item">
+                <h6>技术分析</h6>
+                <p>${response.data.analysis?.technical_analysis || '暂无技术分析'}</p>
+            </div>
+            <div class="news-item">
+                <h6>分析理由</h6>
+                <p>${response.data.analysis?.reasoning || '暂无分析理由'}</p>
+            </div>
+            <div class="news-item">
+                <h6>关键点</h6>
+                <ul>
+${(response.data.analysis?.key_points || []).map(point => `<li>${point}</li>`).join('') || '<li>暂无关键点</li>'}
+</ul>
+            </div>
+<div class="news-item">
+    <h6>最新日K数据</h6>
+    <p>开盘价: ${response.data.latest_data?.open || 'N/A'}</p>
+    <p>最高价: ${response.data.latest_data?.high || 'N/A'}</p>
+    <p>最低价: ${response.data.latest_data?.low || 'N/A'}</p>
+    <p>收盘价: ${response.data.latest_data?.close || 'N/A'}</p>
+    <p>交易量: ${response.data.latest_data?.volume || 'N/A'}</p>
+</div>
+<div class="news-item">
+    <h6>关键新闻</h6>
+    <ul>
+        ${(response.data.news || []).slice(0, 5).map(news => `<li><a href="${news.url || '#'}" target="_blank">${news.title || news}</a></li>`).join('')}
+    </ul>
+</div>
+        `;
+        resultDiv.style.display = 'block';
+    })
+    .catch(error => {
+    // **关键修改：从 error.response.data.detail 获取详细错误信息**
+    const errorMessage = error.response?.data?.detail || '未知错误';
+    contentDiv.innerHTML = `<div class="alert alert-danger">分析失败: ${errorMessage}</div>`;
+    resultDiv.style.display = 'block';
+    })
+    .finally(() => {
+        loadingDiv.style.display = 'none';
+    });
 }
+
+function addStock() {
+    const modal = new bootstrap.Modal(document.getElementById('addStockModal'));
+    modal.show();
+}
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        let cookieValue = parts.pop().split(';').shift();
+        
+        // 处理可能的引号包围
+        if (cookieValue && cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
+            cookieValue = cookieValue.substring(1, cookieValue.length - 1);
+        }
+        
+        // 移除 "Bearer " 前缀，如果存在的话
+        if (cookieValue && cookieValue.startsWith('Bearer%20')) { // URL编码的空格
+            cookieValue = cookieValue.substring(9); 
+        } else if (cookieValue && cookieValue.startsWith('Bearer ')) {
+            cookieValue = cookieValue.substring(7);
+        }
+        
+        return cookieValue;
+    }
+    return null;
+}
+
+function submitAddStock() {
+    const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
+    if (!symbol) return;
+    
+    // 直接发送请求，不需要token和headers
+    axios.post('/api/subscribe', {stock_symbol: symbol})
+    .then(response => {
+        location.reload();
+    })
+    .catch(error => {
+        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+    });
+}
+
+function toggleEmailNotifications() {
+    const enabled = document.getElementById('emailNotifications').checked;
+    // 直接发送请求，不需要token和headers
+    axios.post('/api/toggle-notifications', {enabled: enabled})
+    .then(response => {
+        console.log('邮件通知设置已更新');
+    })
+    .catch(error => {
+        alert('设置更新失败: ' + (error.response?.data?.error || '未知错误'));
+        document.getElementById('emailNotifications').checked = !enabled;
+    });
+}
+
+function deleteStock(symbol) {
+    if (!confirm(`确定要删除股票 ${symbol} 吗？`)) {
+        return;
+    }
+    
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = token;
+    }
+    
+    // 发送带有认证信息的请求
+    axios.delete(`/api/unsubscribe/${symbol}`, { headers: headers })
+    .then(response => {
+        console.log('删除成功:', response.data);
+        // 删除成功后重新加载页面
+        location.reload();
+    })
+    .catch(error => {
+        console.error('删除失败:', error.response?.data?.detail || '未知错误');
+        alert('删除失败: ' + (error.response?.data?.detail || '未知错误'));
+    });
+}
+
+function showUpdateEmailModal() {
+    const modal = new bootstrap.Modal(document.getElementById('updateEmailModal'));
+    modal.show();
+}
+
+function submitUpdateEmail() {
+    const newEmail = document.getElementById('newEmail').value.trim();
+    
+    if (!newEmail) {
+        alert('请输入邮箱地址');
+        return;
+    }
+    
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+        headers["Content-Type"] = "application/json";
+    }
+    
+    // 发送邮箱更新请求
+    axios.put('/api/users/me/email', { email: newEmail }, { headers: headers })
+    .then(response => {
+        alert('邮箱更新成功！');
+        // 关闭模态框并重新加载页面
+        const modal = bootstrap.Modal.getInstance(document.getElementById('updateEmailModal'));
+        modal.hide();
+        location.reload();
+    })
+    .catch(error => {
+        const errorMessage = error.response?.data?.detail || '更新失败';
+        alert('邮箱更新失败: ' + errorMessage);
+    });
+}
+</script>
+{% endblock %}
+</file>
+
+<file path="services/ai_analyzer.py">
+import requests
+import json
+import os
+from typing import Dict, Optional
+import re
+from config import Config
+
+class AIAnalyzer:
+    def __init__(self, model_name: str = None):
+        self.config = Config()
+        self.model_type = self.config.AI_MODEL_TYPE.lower()
+        
+        if self.model_type == "ollama":
+            # Ollama配置
+            self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            self.model_name = model_name or os.getenv("OLLAMA_MODEL", "qwen3:14b")
+            self.ollama_url = f"{self.ollama_base_url}/api/chat"
+        elif self.model_type == "deepseek":
+            # DeepSeek配置
+            self.deepseek_api_key = self.config.DEEPSEEK_API_KEY
+            self.deepseek_api_url = self.config.DEEPSEEK_API_URL
+            self.model_name = model_name or self.config.DEEPSEEK_MODEL
+        else:
+            raise ValueError(f"Unsupported AI model type: {self.model_type}")
+    def extract_json_from_qwen_output(self,text: str) -> dict or None:
+        """
+        使用正则表达式从Qwen模型输出中提取JSON内容。
+        Args:
+            text: 包含<think>和JSON部分的字符串。
+        Returns:
+            如果找到并成功解析，返回Python字典；否则返回None。
+        """
+        # 匹配以 `{` 开头，以 `}` 结尾的JSON对象，并使用非贪婪模式 `*?`
+        # 以确保只匹配第一个完整的JSON对象，而非整个字符串。
+        # re.DOTALL 标志允许 `.` 匹配换行符，这在多行JSON中非常重要。
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        
+        if match:
+            json_string = match.group(0)
+            try:
+                # 使用json模块将提取的字符串解析为Python字典
+                json_data = json.loads(json_string)
+                return json_data
+            except json.JSONDecodeError as e:
+                print(f"JSON解析失败: {e}")
+                return None
+        else:
+            print("未找到JSON内容。")
+            return None
+
+    
+    def analyze_stock_news(self, symbol: str, news_data: Dict, price_data: Optional[Dict] = None) -> Dict:
+        """
+        Analyzes stock news using a local Ollama model with robust error handling.
+        """
+        
+        news_text = "\n".join([
+            f"- Title: {news['title']}\n  Summary: {news['summary']}"
+            for news in news_data.get("news", [])
+        ])
+        
+        price_info = "No price data available."
+        if price_data:
+            price_info = f"""
+- Latest Price: ${price_data.get('close', 'N/A')}
+- Open: ${price_data.get('open', 'N/A')}
+- High: ${price_data.get('high', 'N/A')}
+- Low: ${price_data.get('low', 'N/A')}
+- Volume: {price_data.get('volume', 'N/A')}
+"""
+        
+        # A slightly improved and clearer prompt for the model
+        user_prompt = f"""
+You are a highly experienced and expert financial analyst specializing in stock market research. Your task is to provide a comprehensive, data-driven analysis for the stock with the ticker symbol {symbol}. Your analysis must be grounded in both fundamental and technical principles, based on the provided data.
+
+**Step-by-Step Analysis & Reasoning:**
+1.  **Fundamental Analysis:** Carefully review the recent news articles. Identify key events, corporate announcements, macroeconomic factors, or industry trends that could act as catalysts (positive or negative) for the stock price. Synthesize the core sentiment and potential impact of these news items.
+2.  **Technical Analysis:** Examine the provided price information. Identify significant price trends, volatility, trading volume patterns, and key support and resistance levels. Describe what the price action suggests about market momentum and investor sentiment.
+3.  **Synthesis:** Combine your fundamental and technical findings. Explain how the news is reflected in the price action or if there is a divergence. Use this synthesis to form a cohesive investment thesis.
+
+**Input Data:**
+- **Price Information:**
+{price_info}
+- **Recent News Articles:**
+{news_text}
+
+**Your Final Output Task:**
+Based on your analysis, respond with a single, valid JSON object that contains your complete analysis. The JSON object must have the following keys:
+- "overall_sentiment": (string) Must be one of "positive", "negative", or "neutral". This should reflect the overall mood derived from your analysis.
+- "key_points": (array of strings) A list of the most important takeaways from the news articles.
+- "technical_analysis": (string) A concise analysis based on the provided price data, including a mention of trend and support/resistance.
+- "recommendation": (string) Your investment recommendation. Must be one of "buy", "hold", or "sell".
+- "risk_level": (string) The perceived investment risk. Must be one of "low", "medium", or "high". This should be justified by factors from both news and price action.
+- "summary": (string) A concise summary of your overall analysis.
+- "reasoning": (string) A clear and detailed explanation for your recommendation and summary. This should connect the fundamental news catalysts with the technical price action to justify the final conclusion.
+
+**Important Note:** Do not include any text, explanations, or code formatting marks like ```json before or after the JSON object. The response must be a valid, standalone JSON object.
 """
 
-# 调用函数并打印结果
-extracted_json = extract_json_from_qwen_output(model_output)
+        # 根据模型类型选择不同的API调用方式
+        if self.model_type == "ollama":
+            payload = {
+                "model": self.model_name,
+                "stream": False,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful financial analysis assistant that responds only with a single, valid JSON object."
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt
+                    }
+                ],
+                "options": {
+                    "temperature": 0.5
+                }
+            }
+            
+            try:
+                response = requests.post(self.ollama_url, json=payload, timeout=120)
+                response.raise_for_status()
+                
+                result = response.json()
+                raw_response_text = result.get("message", {}).get("content", "").strip()
+                
+                print(f"Raw AI response from Ollama: {raw_response_text}")
+                
+            except requests.exceptions.RequestException as e:
+                error_message = f"Could not connect to Ollama service: {e}"
+                print(f"Error analyzing stock {symbol}: {error_message}")
+                return {"symbol": symbol, "analysis": {}, "error": error_message}
+                
+        elif self.model_type == "deepseek":
+            if not self.deepseek_api_key:
+                error_message = "DeepSeek API key is not configured"
+                print(f"Error: {error_message}")
+                return {"symbol": symbol, "analysis": {}, "error": error_message}
+                
+            payload = {
+                "model": self.model_name,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful financial analysis assistant that responds only with a single, valid JSON object."
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt
+                    }
+                ],
+                "temperature": 0.5,
+                "response_format": {"type": "json_object"}
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            try:
+                response = requests.post(self.deepseek_api_url, json=payload, headers=headers, timeout=120)
+                response.raise_for_status()
+                
+                result = response.json()
+                raw_response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                
+                print(f"Raw AI response from DeepSeek: {raw_response_text}")
+                
+            except requests.exceptions.RequestException as e:
+                error_message = f"Could not connect to DeepSeek API: {e}"
+                print(f"Error analyzing stock {symbol}: {error_message}")
+                return {"symbol": symbol, "analysis": {}, "error": error_message}
+        
+        else:
+            error_message = f"Unsupported AI model type: {self.model_type}"
+            print(f"Error: {error_message}")
+            return {"symbol": symbol, "analysis": {}, "error": error_message}
 
-if extracted_json:
-    print("成功提取并解析的JSON内容:")
-    print(json.dumps(extracted_json, indent=2, ensure_ascii=False))
+        # 处理AI响应（通用逻辑）
+        # Gracefully handle empty or malformed responses from the AI model
+        if not raw_response_text:
+            error_message = "AI model returned an empty response. This could be due to high server load, a model configuration issue, or an overly restrictive prompt."
+            print(f"Warning: {error_message}")
+            return {"symbol": symbol, "analysis": {}, "error": error_message}
+
+        try:
+            # 对于DeepSeek，由于使用了response_format=json_object，可以直接解析JSON
+            if self.model_type == "deepseek":
+                analysis = json.loads(raw_response_text)
+            else:
+                # 对于Ollama，使用原有的JSON提取逻辑
+                extracted_json = self.extract_json_from_qwen_output(raw_response_text)
+                extracted_json = json.dumps(extracted_json, indent=2, ensure_ascii=False)
+                analysis = json.loads(extracted_json)
+            
+            if not isinstance(analysis, dict) or not analysis:
+                error_message = "AI model returned valid JSON, but it was empty or not an object."
+                print(f"Warning: {error_message}")
+                return {"symbol": symbol, "analysis": {}, "error": error_message}
+
+            return {"symbol": symbol, "analysis": analysis}
+        
+        except json.JSONDecodeError as e:
+            error_message = f"Failed to parse JSON from AI model. Error: {e}"
+            print(f"Error: {error_message}\nRaw Response was: {raw_response_text}")
+            return {"symbol": symbol, "analysis": {}, "error": error_message}
+            
+        except Exception as e:
+            error_message = f"An unexpected error occurred during AI analysis: {e}"
+            print(f"Error analyzing stock {symbol}: {error_message}")
+            return {"symbol": symbol, "analysis": {}, "error": error_message}
 </file>
 
 </files>

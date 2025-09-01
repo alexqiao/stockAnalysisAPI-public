@@ -25,6 +25,72 @@
     .loading {
         display: none;
     }
+    /* 新增样式 */
+    .summary-card {
+        border: 1px solid #e9ecef;
+        border-left-width: 5px;
+        border-radius: 0.5rem;
+        padding: 1.25rem;
+    }
+    .summary-card-title {
+        font-size: 0.9rem;
+        color: #6c757d;
+        margin-bottom: 0.25rem;
+        font-weight: 500;
+    }
+    .summary-card-value {
+        font-size: 1.75rem;
+        font-weight: bold;
+    }
+    /* 颜色编码 */
+    .summary-card.hold { border-left-color: #ffc107; }
+    .summary-card.hold .summary-card-value { color: #ffc107; }
+    .summary-card.buy { border-left-color: #198754; }
+    .summary-card.buy .summary-card-value { color: #198754; }
+    .summary-card.sell { border-left-color: #dc3545; }
+    .summary-card.sell .summary-card-value { color: #dc3545; }
+
+    .summary-card.positive { border-left-color: #198754; }
+    .summary-card.positive .summary-card-value { color: #198754; }
+    .summary-card.negative { border-left-color: #dc3545; }
+    .summary-card.negative .summary-card-value { color: #dc3545; }
+    .summary-card.neutral { border-left-color: #6c757d; }
+    .summary-card.neutral .summary-card-value { color: #6c757d; }
+
+    .summary-card.medium { border-left-color: #fd7e14; }
+    .summary-card.medium .summary-card-value { color: #fd7e14; }
+    .summary-card.low { border-left-color: #198754; }
+    .summary-card.low .summary-card-value { color: #198754; }
+    .summary-card.high { border-left-color: #dc3545; }
+    .summary-card.high .summary-card-value { color: #dc3545; }
+
+    .key-points-list {
+        list-style: none;
+        padding-left: 0;
+    }
+    .key-points-list li {
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: flex-start;
+    }
+    .key-points-list li .fa-check-circle {
+        color: #3498db;
+        margin-right: 10px;
+        margin-top: 5px;
+    }
+    .data-card {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+    }
+    .data-card ul li {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .data-card ul li:last-child {
+        border-bottom: none;
+    }
 </style>
 {% endblock %}
 
@@ -167,6 +233,31 @@
 
 {% block extra_js %}
 <script>
+function getRecommendationClass(recommendation) {
+    if (!recommendation) return 'hold';
+    const rec = recommendation.toLowerCase();
+    if (rec === 'buy') return 'buy';
+    if (rec === 'sell') return 'sell';
+    return 'hold';
+}
+
+function getSentimentClass(sentiment) {
+    if (!sentiment) return 'neutral';
+    const sent = sentiment.toLowerCase();
+    if (sent === 'positive') return 'positive';
+    if (sent === 'negative') return 'negative';
+    return 'neutral';
+}
+
+function getRiskClass(risk) {
+    if (!risk) return 'medium';
+    const r = risk.toLowerCase();
+    if (r === 'low') return 'low';
+    if (r === 'high') return 'high';
+    return 'medium';
+}
+
+
 function analyzeStock(symbol) {
     const resultDiv = document.getElementById('analysis-result');
     const loadingDiv = document.getElementById('analysis-loading');
@@ -176,68 +267,113 @@ function analyzeStock(symbol) {
     resultDiv.style.display = 'none';
     loadingDiv.style.display = 'block';
     
-    // 获取cookie中的token
     const token = getCookie("access_token");
-    console.log("Frontend: Retrieved token from cookie:", token);
-    
-    // 创建包含token的请求头
     const headers = {};
     if (token) {
         headers["Authorization"] = `Bearer ${token}`;
     }
-    console.log("Frontend: Sending headers with Authorization:", headers);
     
-    // 发送带有认证信息的请求
     axios.get(`/api/analyze/${symbol}`, { headers: headers })
     .then(response => {
-        titleDiv.textContent = `${symbol} 分析报告 (更新于 ${response.data.analysis_date})`;
+        const data = response.data;
+        const analysis = data.analysis || {};
+        const latestData = data.latest_data || {};
+
+        // 设置主标题
+        titleDiv.textContent = `${symbol} 分析报告 (更新于 ${data.analysis_date})`;
+        
+        // 生成关键点列表的HTML
+        const keyPointsHtml = (analysis.key_points && analysis.key_points.length > 0)
+            ? analysis.key_points.map(point => `<li><i class="fas fa-check-circle"></i><span>${point}</span></li>`).join('')
+            : '<li>暂无关键点</li>';
+            
+        // 生成新闻列表的HTML
+        const newsHtml = (data.news && data.news.length > 0)
+            ? data.news.map(news => `<a href="${news.url || '#'}" target="_blank" class="list-group-item list-group-item-action">${news.title}</a>`).join('')
+            : '<li class="list-group-item">暂无相关新闻</li>';
+
+        // 这是全新的HTML结构
         contentDiv.innerHTML = `
-            <div class="news-item">
-                <h6>总体评价</h6>
-                <p>${response.data.analysis?.overall_sentiment || '暂无评价'}</p>
+            <div class="row mb-4">
+                <div class="col-md-4">
+                    <div class="summary-card ${getRecommendationClass(analysis.recommendation)}">
+                        <div class="summary-card-title">投资建议</div>
+                        <div class="summary-card-value">${analysis.recommendation?.toUpperCase() || 'N/A'}</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="summary-card ${getSentimentClass(analysis.overall_sentiment)}">
+                        <div class="summary-card-title">总体评价</div>
+                        <div class="summary-card-value">${analysis.overall_sentiment || 'N/A'}</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="summary-card ${getRiskClass(analysis.risk_level)}">
+                        <div class="summary-card-title">风险水平</div>
+                        <div class="summary-card-value">${analysis.risk_level?.toUpperCase() || 'N/A'}</div>
+                    </div>
+                </div>
             </div>
-            <div class="news-item">
-                <h6>投资建议</h6>
-                <p>${response.data.analysis?.recommendation || '暂无建议'}</p>
+
+            <div class="row">
+                <div class="col-lg-8">
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">分析摘要</h5>
+                            <p class="card-text">${analysis.summary || '暂无摘要'}</p>
+                            <hr>
+
+                            <h5 class="card-title mt-4"><i class="fas fa-key me-2"></i>关键点</h5>
+                            <ul class="key-points-list">${keyPointsHtml}</ul>
+                            <hr>
+                            
+                            <h5 class="card-title mt-4">技术分析</h5>
+                            <p class="card-text">${analysis.technical_analysis || '暂无技术分析'}</p>
+                            <hr>
+
+                            <h5 class="card-title mt-4">分析理由</h5>
+                            <p class="card-text">${analysis.reasoning || '暂无分析理由'}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-4">
+                    <div class="card data-card mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">最新日K数据</h5>
+                            <ul>
+                                <li><span>开盘价</span><strong>${latestData.open || 'N/A'}</strong></li>
+                                <li><span>最高价</span><strong>${latestData.high || 'N/A'}</strong></li>
+                                <li><span>最低价</span><strong>${latestData.low || 'N/A'}</strong></li>
+                                <li><span>收盘价</span><strong>${latestData.close || 'N/A'}</strong></li>
+                                <li><span>交易量</span><strong>${latestData.volume?.toLocaleString() || 'N/A'}</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title"><i class="fas fa-newspaper me-2"></i>关键新闻</h5>
+                            <div class="list-group list-group-flush">
+                                ${newsHtml}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="news-item">
-                <h6>分析摘要</h6>
-                <p>${response.data.analysis?.summary || '暂无摘要'}</p>
-            </div>
-            <div class="news-item">
-                <h6>关键点</h6>
-                <ul>
-${(response.data.analysis?.key_points || []).map(point => `<li>${point}</li>`).join('') || '<li>暂无关键点</li>'}
-</ul>
-            </div>
-<div class="news-item">
-    <h6>最新日K数据</h6>
-    <p>开盘价: ${response.data.latest_data?.open || 'N/A'}</p>
-    <p>最高价: ${response.data.latest_data?.high || 'N/A'}</p>
-    <p>最低价: ${response.data.latest_data?.low || 'N/A'}</p>
-    <p>收盘价: ${response.data.latest_data?.close || 'N/A'}</p>
-    <p>交易量: ${response.data.latest_data?.volume || 'N/A'}</p>
-</div>
-<div class="news-item">
-    <h6>关键新闻</h6>
-    <ul>
-        ${(response.data.news || []).slice(0, 5).map(news => `<li><a href="${news.url || '#'}" target="_blank">${news.title || news}</a></li>`).join('')}
-    </ul>
-</div>
         `;
+        
         resultDiv.style.display = 'block';
     })
     .catch(error => {
-    // **关键修改：从 error.response.data.detail 获取详细错误信息**
-    const errorMessage = error.response?.data?.detail || '未知错误';
-    contentDiv.innerHTML = `<div class="alert alert-danger">分析失败: ${errorMessage}</div>`;
-    resultDiv.style.display = 'block';
+        const errorMessage = error.response?.data?.detail || '分析时发生未知错误，请稍后再试。';
+        titleDiv.textContent = `${symbol} 分析报告`;
+        contentDiv.innerHTML = `<div class="alert alert-danger">${errorMessage}</div>`;
+        resultDiv.style.display = 'block';
     })
     .finally(() => {
         loadingDiv.style.display = 'none';
     });
 }
-
 function addStock() {
     const modal = new bootstrap.Modal(document.getElementById('addStockModal'));
     modal.show();
