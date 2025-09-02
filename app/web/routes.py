@@ -2,10 +2,11 @@ from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from app.db.database import get_db
-from app.db.models import User
+from app.db.models import User, StockAnalysis
 from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash
-from datetime import timedelta
+from datetime import timedelta, date
 from typing import Optional
 
 router = APIRouter()
@@ -177,3 +178,46 @@ async def get_current_user_from_cookie(request: Request, db: Session) -> Optiona
     except Exception as e:
         print(f"Error getting current user: {e}")
         return None
+
+
+@router.get("/analysis/{symbol}/{analysis_date_str}", response_class=HTMLResponse)
+async def detailed_analysis(
+    request: Request,
+    symbol: str,
+    analysis_date_str: str,
+    db: Session = Depends(get_db)
+):
+    """股票详细分析页面"""
+    try:
+        # 将日期字符串转换为日期对象
+        analysis_date = date.fromisoformat(analysis_date_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="日期格式无效，请使用YYYY-MM-DD格式")
+    
+    # 查询数据库中的分析记录
+    analysis = db.query(StockAnalysis).filter(
+        and_(
+            StockAnalysis.stock_symbol == symbol.upper(),
+            StockAnalysis.analysis_date == analysis_date
+        )
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="分析记录未找到")
+    
+    # 准备模板数据
+    analysis_data = {
+        "symbol": symbol.upper(),
+        "analysis_date": analysis_date,
+        "analysis_result": analysis.analysis_result or {},
+        "latest_price_data": analysis.latest_price_data or {},
+        "news_data": analysis.news_data or []
+    }
+    
+    return templates.TemplateResponse(
+        "detailed_analysis.html",
+        {
+            "request": request,
+            "analysis": analysis_data
+        }
+    )

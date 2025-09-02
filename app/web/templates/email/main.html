@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>每日股票分析摘要</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f8f9fa;
+            margin: 0;
+            padding: 20px;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .email-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .email-header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .email-header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+        }
+        .email-content {
+            padding: 30px;
+        }
+        .greeting {
+            margin-bottom: 25px;
+            color: #666;
+        }
+        .date-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 25px;
+            text-align: center;
+            border-left: 4px solid #3498db;
+        }
+        .stock-cards-container {
+            margin: 0 -10px;
+        }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-top: 1px solid #e9ecef;
+            color: #666;
+            font-size: 14px;
+        }
+        .footer p {
+            margin: 5px 0;
+        }
+        .disclaimer {
+            font-size: 12px;
+            color: #999;
+            margin-top: 15px;
+        }
+        .unsubscribe {
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        .unsubscribe a {
+            color: #666;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="email-header">
+            <h1>📈 每日股票分析摘要</h1>
+            <p>为您提供最新的投资洞察</p>
+        </div>
+        
+        <div class="email-content">
+            <div class="greeting">
+                <h2>尊敬的投资者，您好！</h2>
+                <p>以下是您订阅股票的最新分析摘要：</p>
+            </div>
+            
+            <div class="date-info">
+                <strong>分析日期：{{ analysis_date }}</strong>
+            </div>
+            
+            <div class="stock-cards-container">
+                {stock_cards}
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>💡 温馨提示：投资有风险，入市需谨慎</p>
+            <p>📧 本邮件由 Stock News Analyzer 系统自动生成</p>
+            <div class="disclaimer">
+                本分析报告仅供参考，不构成投资建议。市场有风险，投资需谨慎。
+            </div>
+            <div class="unsubscribe">
+                <a href="{{ unsubscribe_url }}">取消订阅邮件通知</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

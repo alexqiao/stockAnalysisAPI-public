@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+
+{% block title %}{{ analysis.symbol }} 详细分析 - Stock News Analyzer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .summary-card {
+        border: 1px solid #e9ecef;
+        border-left-width: 5px;
+        border-radius: 0.5rem;
+        padding: 1.25rem;
+        height: 100%;
+    }
+    .summary-card-title {
+        font-size: 0.9rem;
+        color: #6c757d;
+        margin-bottom: 0.25rem;
+        font-weight: 500;
+    }
+    .summary-card-value {
+        font-size: 1.75rem;
+        font-weight: bold;
+    }
+    /* 颜色编码 */
+    .summary-card.hold { border-left-color: #ffc107; }
+    .summary-card.hold .summary-card-value { color: #ffc107; }
+    .summary-card.buy { border-left-color: #198754; }
+    .summary-card.buy .summary-card-value { color: #198754; }
+    .summary-card.sell { border-left-color: #dc3545; }
+    .summary-card.sell .summary-card-value { color: #dc3545; }
+
+    .summary-card.positive { border-left-color: #198754; }
+    .summary-card.positive .summary-card-value { color: #198754; }
+    .summary-card.negative { border-left-color: #dc3545; }
+    .summary-card.negative .summary-card-value { color: #dc3545; }
+    .summary-card.neutral { border-left-color: #6c757d; }
+    .summary-card.neutral .summary-card-value { color: #6c757d; }
+
+    .summary-card.medium { border-left-color: #fd7e14; }
+    .summary-card.medium .summary-card-value { color: #fd7e14; }
+    .summary-card.low { border-left-color: #198754; }
+    .summary-card.low .summary-card-value { color: #198754; }
+    .summary-card.high { border-left-color: #dc3545; }
+    .summary-card.high .summary-card-value { color: #dc3545; }
+
+    .key-points-list {
+        list-style: none;
+        padding-left: 0;
+    }
+    .key-points-list li {
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: flex-start;
+    }
+    .key-points-list li .fa-check-circle {
+        color: #3498db;
+        margin-right: 10px;
+        margin-top: 5px;
+    }
+    .data-card {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+    }
+    .data-card ul li {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .data-card ul li:last-child {
+        border-bottom: none;
+    }
+    .news-item {
+        border-left: 3px solid #3498db;
+        padding-left: 1rem;
+        margin-bottom: 1rem;
+    }
+    .back-button {
+        margin-bottom: 1.5rem;
+    }
+    .analysis-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 0.5rem;
+        margin-bottom: 2rem;
+    }
+    .metric-card {
+        background: white;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        margin-bottom: 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="back-button">
+    <a href="/dashboard" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-2"></i>返回仪表盘
+    </a>
+</div>
+
+<div class="analysis-header">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h1 class="display-5 fw-bold">{{ analysis.symbol }}</h1>
+            <p class="lead mb-0">详细分析报告</p>
+            <p class="mb-0">分析日期: {{ analysis.analysis_date }}</p>
+        </div>
+        <div class="col-md-4 text-md-end">
+            <div class="d-flex justify-content-md-end gap-3">
+                <div class="text-center">
+                    <div class="fs-6">股票代码</div>
+                    <div class="fs-3 fw-bold">{{ analysis.symbol }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="summary-card {% if analysis.analysis_result.recommendation %}{% if analysis.analysis_result.recommendation|lower == 'buy' %}buy{% elif analysis.analysis_result.recommendation|lower == 'sell' %}sell{% else %}hold{% endif %}{% else %}hold{% endif %}">
+            <div class="summary-card-title">投资建议</div>
+            <div class="summary-card-value">{{ analysis.analysis_result.recommendation|default('N/A')|upper }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="summary-card {% if analysis.analysis_result.overall_sentiment %}{% if analysis.analysis_result.overall_sentiment|lower == 'positive' %}positive{% elif analysis.analysis_result.overall_sentiment|lower == 'negative' %}negative{% else %}neutral{% endif %}{% else %}neutral{% endif %}">
+            <div class="summary-card-title">总体评价</div>
+            <div class="summary-card-value">{{ analysis.analysis_result.overall_sentiment|default('N/A') }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="summary-card {% if analysis.analysis_result.risk_level %}{% if analysis.analysis_result.risk_level|lower == 'low' %}low{% elif analysis.analysis_result.risk_level|lower == 'high' %}high{% else %}medium{% endif %}{% else %}medium{% endif %}">
+            <div class="summary-card-title">风险水平</div>
+            <div class="summary-card-value">{{ analysis.analysis_result.risk_level|default('N/A')|upper }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <!-- 分析摘要 -->
+        <div class="metric-card">
+            <h4><i class="fas fa-file-alt me-2"></i>分析摘要</h4>
+            <p class="mb-0">{{ analysis.analysis_result.summary|default('暂无分析摘要') }}</p>
+        </div>
+
+        <!-- 关键点 -->
+        {% if analysis.analysis_result.key_points and analysis.analysis_result.key_points|length > 0 %}
+        <div class="metric-card">
+            <h4><i class="fas fa-key me-2"></i>关键点</h4>
+            <ul class="key-points-list">
+                {% for point in analysis.analysis_result.key_points %}
+                <li><i class="fas fa-check-circle"></i><span>{{ point }}</span></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- 技术分析 -->
+        {% if analysis.analysis_result.technical_analysis %}
+        <div class="metric-card">
+            <h4><i class="fas fa-chart-line me-2"></i>技术分析</h4>
+            <p class="mb-0">{{ analysis.analysis_result.technical_analysis }}</p>
+        </div>
+        {% endif %}
+
+        <!-- 分析理由 -->
+        {% if analysis.analysis_result.reasoning %}
+        <div class="metric-card">
+            <h4><i class="fas fa-lightbulb me-2"></i>分析理由</h4>
+            <p class="mb-0">{{ analysis.analysis_result.reasoning }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-4">
+        <!-- 最新价格数据 -->
+        <div class="metric-card">
+            <h4><i class="fas fa-chart-bar me-2"></i>最新日K数据</h4>
+            <div class="data-card">
+                <ul>
+                    <li><span>开盘价</span><strong>{{ analysis.latest_price_data.open|default('N/A') }}</strong></li>
+                    <li><span>最高价</span><strong>{{ analysis.latest_price_data.high|default('N/A') }}</strong></li>
+                    <li><span>最低价</span><strong>{{ analysis.latest_price_data.low|default('N/A') }}</strong></li>
+                    <li><span>收盘价</span><strong>{{ analysis.latest_price_data.close|default('N/A') }}</strong></li>
+                    <li><span>交易量</span><strong>{{ analysis.latest_price_data.volume|default('N/A') }}</strong></li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 相关新闻 -->
+        {% if analysis.news_data and analysis.news_data|length > 0 %}
+        <div class="metric-card">
+            <h4><i class="fas fa-newspaper me-2"></i>相关新闻</h4>
+            <div class="list-group list-group-flush">
+                {% for news in analysis.news_data %}
+                <a href="{{ news.url|default('#') }}" target="_blank" class="list-group-item list-group-item-action">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h6 class="mb-1">{{ news.title|default('无标题') }}</h6>
+                    </div>
+                    {% if news.published_at %}
+                    <small class="text-muted">{{ news.published_at }}</small>
+                    {% endif %}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function get_recommendation_class(recommendation) {
+    if (!recommendation) return 'hold';
+    const rec = recommendation.toLowerCase();
+    if (rec === 'buy') return 'buy';
+    if (rec === 'sell') return 'sell';
+    return 'hold';
+}
+
+function get_sentiment_class(sentiment) {
+    if (!sentiment) return 'neutral';
+    const sent = sentiment.toLowerCase();
+    if (sent === 'positive') return 'positive';
+    if (sent === 'negative') return 'negative';
+    return 'neutral';
+}
+
+function get_risk_class(risk) {
+    if (!risk) return 'medium';
+    const r = risk.toLowerCase();
+    if (r === 'low') return 'low';
+    if (r === 'high') return 'high';
+    return 'medium';
+}
+</script>
+{% endblock %}

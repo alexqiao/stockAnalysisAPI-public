@@ -42,6 +42,7 @@ The content is organized as follows:
 <directory_structure>
 app/
   api/
+    admin_router.py
     main_api_router.py
   core/
     security.py
@@ -63,6 +64,7 @@ app/
 scripts/
   create_test_user.py
   debug_ai_analyzer.py
+  set_admin.py
 services/
   ai_analyzer_backup.py
   ai_analyzer.py
@@ -110,114 +112,185 @@ requirements.txt
 run_comprehensive_tests.py
 run_tests.py
 run.py
+test_email_send.py
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
 
-<file path="app/core/security.py">
-from datetime import datetime, timedelta
-from typing import Optional
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer
+<file path="test_email_send.py">
+#!/usr/bin/env python3
+"""
+测试邮件发送功能
+使用账号 ccppaap 密码 password123 测试邮件发送
+"""
+
+import sys
+import os
 from sqlalchemy.orm import Session
-from app.db.database import get_db
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+# 添加项目根目录到 Python 路径
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from app.db.database import SessionLocal, engine
 from app.db.models import User
-from app.schemas import TokenData
+from services.email_service import EmailService
 
-SECRET_KEY = "your-secret-key-here-change-in-production"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def get_user(db: Session, username: str):
-    return db.query(User).filter(User.username == username).first()
-
-def authenticate_user(db: Session, username: str, password: str):
-    user = get_user(db, username)
-    if not user:
-        return False
-    if not verify_password(password, user.password_hash):
-        return False
-    return user
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def get_user_email(username: str) -> str:
+    """获取指定用户的邮箱地址"""
+    db = SessionLocal()
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    
-    user = get_user(db, username=token_data.username)
-    if user is None:
-        raise credentials_exception
-    return user
-
-
-async def get_current_user_from_cookie_or_header(request: Request, db: Session = Depends(get_db)):
-    """从cookie或Authorization header中获取当前用户"""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    # 首先尝试从Authorization header获取token
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-    else:
-        # 如果没有Authorization header，尝试从cookie获取
-        token_cookie = request.cookies.get("access_token")
-        if token_cookie and token_cookie.startswith("Bearer "):
-            # 处理可能的引号包围
-            if token_cookie.startswith('"') and token_cookie.endswith('"'):
-                token_cookie = token_cookie[1:-1]
-            token = token_cookie.split(" ")[1]
+        user = db.query(User).filter(User.username == username).first()
+        if user:
+            print(f"找到用户: {username}, 邮箱: {user.email}")
+            return user.email
         else:
-            raise credentials_exception
+            print(f"用户 {username} 不存在")
+            return None
+    finally:
+        db.close()
+
+def test_email_send():
+    """测试邮件发送功能"""
+    print("开始测试邮件发送功能...")
     
+    # 获取 ccppaap 用户的邮箱
+    email = get_user_email("ccppaap")
+    if not email:
+        print("无法获取用户邮箱，测试终止")
+        return False
+    
+    # 创建邮件服务实例
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        
-        user = get_user(db, username=username)
-        if user is None:
-            raise credentials_exception
-        return user
-        
-    except JWTError:
-        raise credentials_exception
+        email_service = EmailService()
+        print("邮件服务初始化成功")
+    except ValueError as e:
+        print(f"邮件服务初始化失败: {e}")
+        return False
+    
+    # 创建测试分析数据
+    test_analyses = [
+        {
+            "symbol": "AAPL",
+            "analysis": {
+                "recommendation": "buy",
+                "overall_sentiment": "positive",
+                "risk_level": "low",
+                "key_points": [
+                    "苹果公司季度财报超出预期",
+                    "iPhone 销量强劲增长",
+                    "服务业务收入创新高"
+                ],
+                "technical_analysis": "股价突破阻力位，形成上升趋势",
+                "reasoning": "基本面强劲，技术面支持上涨"
+            }
+        },
+        {
+            "symbol": "TSLA",
+            "analysis": {
+                "recommendation": "hold",
+                "overall_sentiment": "neutral",
+                "risk_level": "high",
+                "key_points": [
+                    "特斯拉交付量符合预期",
+                    "市场竞争加剧",
+                    "自动驾驶技术进展缓慢"
+                ],
+                "technical_analysis": "股价在关键支撑位附近震荡",
+                "reasoning": "等待更明确的市场信号"
+            }
+        }
+    ]
+    
+    # 发送测试邮件
+    print(f"准备发送测试邮件到: {email}")
+    success = email_service.send_analysis_report(email, test_analyses)
+    
+    if success:
+        print("✅ 邮件发送测试成功！")
+        print(f"测试邮件已发送到: {email}")
+        return True
+    else:
+        print("❌ 邮件发送测试失败")
+        return False
+
+if __name__ == "__main__":
+    print("=" * 50)
+    print("股票分析API - 邮件发送功能测试")
+    print("=" * 50)
+    
+    success = test_email_send()
+    
+    print("=" * 50)
+    if success:
+        print("测试完成: ✅ 成功")
+        sys.exit(0)
+    else:
+        print("测试完成: ❌ 失败")
+        sys.exit(1)
+</file>
+
+<file path="app/api/admin_router.py">
+# app/api/admin_router.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+
+from app.db.database import get_db
+from app.db.models import User, Subscription
+from app.schemas import UserResponse, SubscriptionResponse, SubscriptionCreate
+from app.core.security import get_current_admin_user
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["Admin"],
+    dependencies=[Depends(get_current_admin_user)] # 关键：此路由下的所有端点都需要管理员权限
+)
+
+@router.get("/users", response_model=List[UserResponse])
+def list_users(db: Session = Depends(get_db)):
+    """获取所有用户列表"""
+    return db.query(User).all()
+
+@router.get("/users/{user_id}/subscriptions", response_model=List[SubscriptionResponse])
+def get_user_subscriptions(user_id: int, db: Session = Depends(get_db)):
+    """查看指定用户的股票订阅"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="未找到用户")
+    return user.subscriptions
+
+@router.post("/users/{user_id}/subscriptions", response_model=SubscriptionResponse)
+def add_subscription_for_user(user_id: int, subscription: SubscriptionCreate, db: Session = Depends(get_db)):
+    """为指定用户添加股票订阅"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="未找到用户")
+
+    # 检查是否已订阅
+    existing = db.query(Subscription).filter_by(user_id=user_id, stock_symbol=subscription.stock_symbol.upper()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该用户已订阅此股票")
+
+    db_sub = Subscription(user_id=user_id, stock_symbol=subscription.stock_symbol.upper())
+    db.add(db_sub)
+    db.commit()
+    db.refresh(db_sub)
+    return db_sub
+
+@router.delete("/users/{user_id}/subscriptions/{symbol}")
+def remove_subscription_for_user(user_id: int, symbol: str, db: Session = Depends(get_db)):
+    """为指定用户删除股票订阅"""
+    sub = db.query(Subscription).filter_by(user_id=user_id, stock_symbol=symbol.upper()).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="未找到该订阅记录")
+
+    db.delete(sub)
+    db.commit()
+    return {"message": "成功删除订阅"}
 </file>
 
 <file path="app/db/database.py">
@@ -744,6 +817,45 @@ if __name__ == "__main__":
     debug_ai_analyzer()
 </file>
 
+<file path="scripts/set_admin.py">
+# scripts/set_admin.py
+
+import sys
+import os
+from sqlalchemy.orm import Session
+
+# 将项目根目录添加到Python路径，以便导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.db.database import SessionLocal
+from app.db.models import User
+
+def set_user_as_admin(username: str):
+    """将指定用户设置为超级用户/管理员"""
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == username).first()
+        
+        if not user:
+            print(f"❌ 错误: 未找到用户 '{username}'")
+            return
+
+        user.is_superuser = True
+        db.commit()
+        print(f"✅ 成功! 用户 '{username}' 现在是管理员了。")
+
+    finally:
+        db.close()
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("用法: python scripts/set_admin.py <要设为管理员的用户名>")
+        sys.exit(1)
+    
+    target_username = sys.argv[1]
+    set_user_as_admin(target_username)
+</file>
+
 <file path="services/ai_analyzer_backup.py">
 import requests
 import json
@@ -997,8 +1109,8 @@ class EmailService:
     def __init__(self):
         self.sender_email = os.getenv("EMAIL_SENDER")
         self.sender_password = os.getenv("EMAIL_PASSWORD")
-        self.smtp_server = os.getenv("SMTP_SERVER", "smtp.126.com")
-        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        self.smtp_server = os.getenv("EMAIL_SMTP_SERVER", "smtp.126.com")
+        self.smtp_port = int(os.getenv("EMAIL_SMTP_PORT", "587"))
         
         if not all([self.sender_email, self.sender_password]):
             raise ValueError("Email configuration not found in environment variables")
@@ -1032,27 +1144,27 @@ class EmailService:
     
     def _generate_html_report(self, analyses: List[Dict]) -> str:
         """生成HTML格式的报告"""
-        html = """
+        html = f"""
         <html>
         <head>
             <style>
-                body { font-family: Arial, sans-serif; margin: 20px; }
-                .header { background-color: #f4f4f4; padding: 20px; border-radius: 5px; }
-                .stock-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
-                .recommendation { font-weight: bold; padding: 5px 10px; border-radius: 3px; }
-                .buy { background-color: #d4edda; color: #155724; }
-                .sell { background-color: #f8d7da; color: #721c24; }
-                .hold { background-color: #fff3cd; color: #856404; }
-                .key-points { margin: 10px 0; }
-                .key-points li { margin: 5px 0; }
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
+                .stock-section {{ margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }}
+                .recommendation {{ font-weight: bold; padding: 5px 10px; border-radius: 3px; }}
+                .buy {{ background-color: #d4edda; color: #155724; }}
+                .sell {{ background-color: #f8d7da; color: #721c24; }}
+                .hold {{ background-color: #fff3cd; color: #856404; }}
+                .key-points {{ margin: 10px 0; }}
+                .key-points li {{ margin: 5px 0; }}
             </style>
         </head>
         <body>
             <div class="header">
                 <h1>股票分析报告</h1>
-                <p>报告生成时间: {current_time}</p>
+                <p>报告生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
             </div>
-        """.format(current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        """
         
         for analysis in analyses:
             symbol = analysis.get("symbol", "")
@@ -4702,51 +4814,121 @@ if __name__ == "__main__":
     main()
 </file>
 
-<file path="app/db/models.py">
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Date, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-from datetime import datetime, date
+<file path="app/core/security.py">
+from datetime import datetime, timedelta
+from typing import Optional
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from app.db.database import get_db
+from app.db.models import User
+from app.schemas import TokenData
 
-Base = declarative_base()
+SECRET_KEY = "your-secret-key-here-change-in-production"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-class User(Base):
-    __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, nullable=False)
-    email = Column(String(100), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
-    email_notifications = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
-    
-    def get_subscribed_stocks_list(self):
-        """获取用户订阅的股票代码列表"""
-        return [sub.stock_symbol for sub in self.subscriptions]
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-class Subscription(Base):
-    __tablename__ = "subscriptions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    stock_symbol = Column(String(10), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    user = relationship("User", back_populates="subscriptions")
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
 
-class StockAnalysis(Base):
-    __tablename__ = "stock_analyses"
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def get_user(db: Session, username: str):
+    return db.query(User).filter(User.username == username).first()
+
+def authenticate_user(db: Session, username: str, password: str):
+    user = get_user(db, username)
+    if not user:
+        return False
+    if not verify_password(password, user.password_hash):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
     
-    id = Column(Integer, primary_key=True, index=True)
-    stock_symbol = Column(String(10), nullable=False, index=True)
-    analysis_date = Column(Date, nullable=False, default=date.today)
-    analysis_result = Column(JSON)
-    latest_price_data = Column(JSON)
-    news_data = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    user = get_user(db, username=token_data.username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+async def get_current_user_from_cookie_or_header(request: Request, db: Session = Depends(get_db)):
+    """从cookie或Authorization header中获取当前用户"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    # 首先尝试从Authorization header获取token
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    else:
+        # 如果没有Authorization header，尝试从cookie获取
+        token_cookie = request.cookies.get("access_token")
+        if token_cookie and token_cookie.startswith("Bearer "):
+            # 处理可能的引号包围
+            if token_cookie.startswith('"') and token_cookie.endswith('"'):
+                token_cookie = token_cookie[1:-1]
+            token = token_cookie.split(" ")[1]
+        else:
+            raise credentials_exception
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        
+        user = get_user(db, username=username)
+        if user is None:
+            raise credentials_exception
+        return user
+        
+    except JWTError:
+        raise credentials_exception
+
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_user_from_cookie_or_header)
+) -> User:
+    """
+    验证当前用户是否为管理员。如果不是，则抛出403 Forbidden错误。
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="没有足够的权限执行此操作"
+        )
+    return current_user
 </file>
 
 <file path="app/web/routes.py">
@@ -5474,65 +5656,6 @@ stockAPI/
 MIT License - 详见 [LICENSE](LICENSE) 文件
 </file>
 
-<file path="run.py">
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
-from app.db.database import engine, Base
-from app.api.main_api_router import router
-from app.web.routes import router as web_router
-from app.daily_tasks import scheduler
-import uvicorn
-
-# 创建数据库表
-Base.metadata.create_all(bind=engine)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """管理应用生命周期"""
-    # 启动定时任务
-    scheduler.start()
-    yield
-    # 关闭定时任务
-    if scheduler.scheduler.running:
-        scheduler.stop()
-
-# 创建FastAPI应用
-app = FastAPI(
-    title="股票分析API",
-    description="基于新闻和AI的股票分析系统",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-# 配置CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 注册路由
-app.include_router(router, prefix="/api")
-app.include_router(web_router)
-
-# 配置静态文件服务
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-if __name__ == "__main__":
-    import sys
-    port = 8000
-    if len(sys.argv) > 1 and sys.argv[1] == "--port":
-        try:
-            port = int(sys.argv[2])
-        except (IndexError, ValueError):
-            print("Invalid port number, using default port 8000")
-    uvicorn.run("run:app", host="0.0.0.0", port=port, reload=True)
-</file>
-
 <file path="app/api/main_api_router.py">
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
@@ -5790,380 +5913,52 @@ def toggle_email_notifications(
     return {"message": "Email notifications updated", "enabled": enabled}
 </file>
 
-<file path="app/web/templates/dashboard.html">
-{% extends "base.html" %}
+<file path="app/db/models.py">
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Date, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from datetime import datetime, date
 
-{% block title %}仪表盘 - Stock News Analyzer{% endblock %}
+Base = declarative_base()
 
-{% block extra_css %}
-<style>
-    .stock-item {
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    .stock-item:hover {
-        background-color: #f8f9fa;
-    }
-    .analysis-result {
-        background-color: #f8f9fa;
-        border-radius: 0.5rem;
-        padding: 1.5rem;
-        margin-top: 1rem;
-    }
-    .news-item {
-        border-left: 3px solid #3498db;
-        padding-left: 1rem;
-        margin-bottom: 1rem;
-    }
-    .loading {
-        display: none;
-    }
-</style>
-{% endblock %}
-
-{% block content %}
-<div class="row">
-    <div class="col-lg-8">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">我的股票订阅</h5>
-            </div>
-            <div class="card-body">
-                <div class="row" id="stocks-container">
-                    {% for stock in user.get_subscribed_stocks_list() %}
-                    <div class="col-md-6 mb-3">
-                        <div class="card stock-item" onclick="analyzeStock('{{ stock }}')">
-                            <div class="card-body">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <h6 class="card-title mb-1">{{ stock }}</h6>
-                                    <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); deleteStock('{{ stock }}')">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                </div>
-                                <small class="text-muted">点击查看分析</small>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                
-                <div class="mt-4">
-                    <button class="btn btn-primary" onclick="addStock()">
-                        <i class="fas fa-plus"></i> 添加股票
-                    </button>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card mt-4">
-            <div class="card-header">
-                <h5 class="mb-0">股票分析结果</h5>
-            </div>
-            <div class="card-body">
-                <div id="analysis-result" class="analysis-result" style="display: none;">
-                    <h6 id="analysis-title"></h6>
-                    <div id="analysis-content"></div>
-                </div>
-                <div id="analysis-loading" class="text-center loading">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <p class="mt-2">正在分析股票...</p>
-                </div>
-            </div>
-        </div>
-    </div>
+class User(Base):
+    __tablename__ = "users"
     
-    <div class="col-lg-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">用户信息</h5>
-            </div>
-            <div class="card-body">
-                <p><strong>用户名:</strong> {{ user.username }}</p>
-                <p>
-                    <strong>邮箱:</strong> {{ user.email }}
-                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="showUpdateEmailModal()">
-                        <i class="fas fa-edit"></i> 修改
-                    </button>
-                </p>
-                <p><strong>订阅股票数:</strong> {{ user.get_subscribed_stocks_list()|length }}</p>
-                
-                <hr>
-                
-                <h6>邮件设置</h6>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="emailNotifications" 
-                           {% if user.email_notifications %}checked{% endif %}
-                           onchange="toggleEmailNotifications()">
-                    <label class="form-check-label" for="emailNotifications">
-                        接收每日分析报告
-                    </label>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    email = Column(String(100), unique=True, index=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    email_notifications = Column(Boolean, default=True)
+    is_superuser = Column(Boolean, default=False, nullable=False) 
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    
+    def get_subscribed_stocks_list(self):
+        """获取用户订阅的股票代码列表"""
+        return [sub.stock_symbol for sub in self.subscriptions]
 
-<!-- 添加股票模态框 -->
-<div class="modal fade" id="addStockModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">添加股票</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <form id="addStockForm">
-                    <div class="mb-3">
-                        <label for="stockSymbol" class="form-label">股票代码</label>
-                        <input type="text" class="form-control" id="stockSymbol" required>
-                        <div class="form-text">例如: AAPL, GOOGL, MSFT</div>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" onclick="submitAddStock()">添加</button>
-            </div>
-        </div>
-    </div>
-</div>
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    stock_symbol = Column(String(10), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User", back_populates="subscriptions")
 
-<!-- 修改邮箱模态框 -->
-<div class="modal fade" id="updateEmailModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">修改邮箱</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <form id="updateEmailForm">
-                    <div class="mb-3">
-                        <label for="newEmail" class="form-label">新邮箱地址</label>
-                        <input type="email" class="form-control" id="newEmail" required
-                               value="{{ user.email }}">
-                        <div class="form-text">请输入有效的新邮箱地址</div>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" onclick="submitUpdateEmail()">保存</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-{% endblock %}
-
-{% block extra_js %}
-<script>
-function analyzeStock(symbol) {
-    const resultDiv = document.getElementById('analysis-result');
-    const loadingDiv = document.getElementById('analysis-loading');
-    const titleDiv = document.getElementById('analysis-title');
-    const contentDiv = document.getElementById('analysis-content');
+class StockAnalysis(Base):
+    __tablename__ = "stock_analyses"
     
-    resultDiv.style.display = 'none';
-    loadingDiv.style.display = 'block';
-    
-    // 获取cookie中的token
-    const token = getCookie("access_token");
-    console.log("Frontend: Retrieved token from cookie:", token);
-    
-    // 创建包含token的请求头
-    const headers = {};
-    if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-    }
-    console.log("Frontend: Sending headers with Authorization:", headers);
-    
-    // 发送带有认证信息的请求
-    axios.get(`/api/analyze/${symbol}`, { headers: headers })
-    .then(response => {
-        titleDiv.textContent = `${symbol} 分析报告 (更新于 ${response.data.analysis_date})`;
-        contentDiv.innerHTML = `
-            <div class="news-item">
-                <h6>总体评价</h6>
-                <p>${response.data.analysis?.overall_sentiment || '暂无评价'}</p>
-            </div>
-            <div class="news-item">
-                <h6>投资建议</h6>
-                <p>${response.data.analysis?.recommendation || '暂无建议'}</p>
-            </div>
-            <div class="news-item">
-                <h6>风险水平</h6>
-                <p>${response.data.analysis?.risk_level || '暂无风险评级'}</p>
-            </div>
-            <div class="news-item">
-                <h6>分析摘要</h6>
-                <p>${response.data.analysis?.summary || '暂无摘要'}</p>
-            </div>
-            <div class="news-item">
-                <h6>技术分析</h6>
-                <p>${response.data.analysis?.technical_analysis || '暂无技术分析'}</p>
-            </div>
-            <div class="news-item">
-                <h6>分析理由</h6>
-                <p>${response.data.analysis?.reasoning || '暂无分析理由'}</p>
-            </div>
-            <div class="news-item">
-                <h6>关键点</h6>
-                <ul>
-${(response.data.analysis?.key_points || []).map(point => `<li>${point}</li>`).join('') || '<li>暂无关键点</li>'}
-</ul>
-            </div>
-<div class="news-item">
-    <h6>最新日K数据</h6>
-    <p>开盘价: ${response.data.latest_data?.open || 'N/A'}</p>
-    <p>最高价: ${response.data.latest_data?.high || 'N/A'}</p>
-    <p>最低价: ${response.data.latest_data?.low || 'N/A'}</p>
-    <p>收盘价: ${response.data.latest_data?.close || 'N/A'}</p>
-    <p>交易量: ${response.data.latest_data?.volume || 'N/A'}</p>
-</div>
-<div class="news-item">
-    <h6>关键新闻</h6>
-    <ul>
-        ${(response.data.news || []).slice(0, 5).map(news => `<li><a href="${news.url || '#'}" target="_blank">${news.title || news}</a></li>`).join('')}
-    </ul>
-</div>
-        `;
-        resultDiv.style.display = 'block';
-    })
-    .catch(error => {
-    // **关键修改：从 error.response.data.detail 获取详细错误信息**
-    const errorMessage = error.response?.data?.detail || '未知错误';
-    contentDiv.innerHTML = `<div class="alert alert-danger">分析失败: ${errorMessage}</div>`;
-    resultDiv.style.display = 'block';
-    })
-    .finally(() => {
-        loadingDiv.style.display = 'none';
-    });
-}
-
-function addStock() {
-    const modal = new bootstrap.Modal(document.getElementById('addStockModal'));
-    modal.show();
-}
-
-function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) {
-        let cookieValue = parts.pop().split(';').shift();
-        
-        // 处理可能的引号包围
-        if (cookieValue && cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
-            cookieValue = cookieValue.substring(1, cookieValue.length - 1);
-        }
-        
-        // 移除 "Bearer " 前缀，如果存在的话
-        if (cookieValue && cookieValue.startsWith('Bearer%20')) { // URL编码的空格
-            cookieValue = cookieValue.substring(9); 
-        } else if (cookieValue && cookieValue.startsWith('Bearer ')) {
-            cookieValue = cookieValue.substring(7);
-        }
-        
-        return cookieValue;
-    }
-    return null;
-}
-
-function submitAddStock() {
-    const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
-    if (!symbol) return;
-    
-    // 直接发送请求，不需要token和headers
-    axios.post('/api/subscribe', {stock_symbol: symbol})
-    .then(response => {
-        location.reload();
-    })
-    .catch(error => {
-        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
-    });
-}
-
-function toggleEmailNotifications() {
-    const enabled = document.getElementById('emailNotifications').checked;
-    // 直接发送请求，不需要token和headers
-    axios.post('/api/toggle-notifications', {enabled: enabled})
-    .then(response => {
-        console.log('邮件通知设置已更新');
-    })
-    .catch(error => {
-        alert('设置更新失败: ' + (error.response?.data?.error || '未知错误'));
-        document.getElementById('emailNotifications').checked = !enabled;
-    });
-}
-
-function deleteStock(symbol) {
-    if (!confirm(`确定要删除股票 ${symbol} 吗？`)) {
-        return;
-    }
-    
-    // 获取cookie中的token
-    const token = getCookie("access_token");
-    
-    // 创建包含token的请求头
-    const headers = {};
-    if (token) {
-        headers["Authorization"] = token;
-    }
-    
-    // 发送带有认证信息的请求
-    axios.delete(`/api/unsubscribe/${symbol}`, { headers: headers })
-    .then(response => {
-        console.log('删除成功:', response.data);
-        // 删除成功后重新加载页面
-        location.reload();
-    })
-    .catch(error => {
-        console.error('删除失败:', error.response?.data?.detail || '未知错误');
-        alert('删除失败: ' + (error.response?.data?.detail || '未知错误'));
-    });
-}
-
-function showUpdateEmailModal() {
-    const modal = new bootstrap.Modal(document.getElementById('updateEmailModal'));
-    modal.show();
-}
-
-function submitUpdateEmail() {
-    const newEmail = document.getElementById('newEmail').value.trim();
-    
-    if (!newEmail) {
-        alert('请输入邮箱地址');
-        return;
-    }
-    
-    // 获取cookie中的token
-    const token = getCookie("access_token");
-    
-    // 创建包含token的请求头
-    const headers = {};
-    if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-        headers["Content-Type"] = "application/json";
-    }
-    
-    // 发送邮箱更新请求
-    axios.put('/api/users/me/email', { email: newEmail }, { headers: headers })
-    .then(response => {
-        alert('邮箱更新成功！');
-        // 关闭模态框并重新加载页面
-        const modal = bootstrap.Modal.getInstance(document.getElementById('updateEmailModal'));
-        modal.hide();
-        location.reload();
-    })
-    .catch(error => {
-        const errorMessage = error.response?.data?.detail || '更新失败';
-        alert('邮箱更新失败: ' + errorMessage);
-    });
-}
-</script>
-{% endblock %}
+    id = Column(Integer, primary_key=True, index=True)
+    stock_symbol = Column(String(10), nullable=False, index=True)
+    analysis_date = Column(Date, nullable=False, default=date.today)
+    analysis_result = Column(JSON)
+    latest_price_data = Column(JSON)
+    news_data = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
 </file>
 
 <file path="services/ai_analyzer.py">
@@ -6379,6 +6174,567 @@ Based on your analysis, respond with a single, valid JSON object that contains y
             error_message = f"An unexpected error occurred during AI analysis: {e}"
             print(f"Error analyzing stock {symbol}: {error_message}")
             return {"symbol": symbol, "analysis": {}, "error": error_message}
+</file>
+
+<file path="run.py">
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+from app.db.database import engine, Base
+from app.api.main_api_router import router
+from app.api.admin_router import router as admin_router
+from app.web.routes import router as web_router
+from app.daily_tasks import scheduler
+import uvicorn
+
+# 创建数据库表
+Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """管理应用生命周期"""
+    # 启动定时任务
+    scheduler.start()
+    yield
+    # 关闭定时任务
+    if scheduler.scheduler.running:
+        scheduler.stop()
+
+# 创建FastAPI应用
+app = FastAPI(
+    title="股票分析API",
+    description="基于新闻和AI的股票分析系统",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# 配置CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
+app.include_router(web_router)
+
+# 配置静态文件服务
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+if __name__ == "__main__":
+    import sys
+    port = 8000
+    if len(sys.argv) > 1 and sys.argv[1] == "--port":
+        try:
+            port = int(sys.argv[2])
+        except (IndexError, ValueError):
+            print("Invalid port number, using default port 8000")
+    uvicorn.run("run:app", host="0.0.0.0", port=port, reload=True)
+</file>
+
+<file path="app/web/templates/dashboard.html">
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - Stock News Analyzer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stock-item {
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    .stock-item:hover {
+        background-color: #f8f9fa;
+    }
+    .analysis-result {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        margin-top: 1rem;
+    }
+    .news-item {
+        border-left: 3px solid #3498db;
+        padding-left: 1rem;
+        margin-bottom: 1rem;
+    }
+    .loading {
+        display: none;
+    }
+    /* 新增样式 */
+    .summary-card {
+        border: 1px solid #e9ecef;
+        border-left-width: 5px;
+        border-radius: 0.5rem;
+        padding: 1.25rem;
+    }
+    .summary-card-title {
+        font-size: 0.9rem;
+        color: #6c757d;
+        margin-bottom: 0.25rem;
+        font-weight: 500;
+    }
+    .summary-card-value {
+        font-size: 1.75rem;
+        font-weight: bold;
+    }
+    /* 颜色编码 */
+    .summary-card.hold { border-left-color: #ffc107; }
+    .summary-card.hold .summary-card-value { color: #ffc107; }
+    .summary-card.buy { border-left-color: #198754; }
+    .summary-card.buy .summary-card-value { color: #198754; }
+    .summary-card.sell { border-left-color: #dc3545; }
+    .summary-card.sell .summary-card-value { color: #dc3545; }
+
+    .summary-card.positive { border-left-color: #198754; }
+    .summary-card.positive .summary-card-value { color: #198754; }
+    .summary-card.negative { border-left-color: #dc3545; }
+    .summary-card.negative .summary-card-value { color: #dc3545; }
+    .summary-card.neutral { border-left-color: #6c757d; }
+    .summary-card.neutral .summary-card-value { color: #6c757d; }
+
+    .summary-card.medium { border-left-color: #fd7e14; }
+    .summary-card.medium .summary-card-value { color: #fd7e14; }
+    .summary-card.low { border-left-color: #198754; }
+    .summary-card.low .summary-card-value { color: #198754; }
+    .summary-card.high { border-left-color: #dc3545; }
+    .summary-card.high .summary-card-value { color: #dc3545; }
+
+    .key-points-list {
+        list-style: none;
+        padding-left: 0;
+    }
+    .key-points-list li {
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: flex-start;
+    }
+    .key-points-list li .fa-check-circle {
+        color: #3498db;
+        margin-right: 10px;
+        margin-top: 5px;
+    }
+    .data-card {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+    }
+    .data-card ul li {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .data-card ul li:last-child {
+        border-bottom: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">我的股票订阅</h5>
+            </div>
+            <div class="card-body">
+                <div class="row" id="stocks-container">
+                    {% for stock in user.get_subscribed_stocks_list() %}
+                    <div class="col-md-6 mb-3">
+                        <div class="card stock-item" onclick="analyzeStock('{{ stock }}')">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h6 class="card-title mb-1">{{ stock }}</h6>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); deleteStock('{{ stock }}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                                <small class="text-muted">点击查看分析</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                
+                <div class="mt-4">
+                    <button class="btn btn-primary" onclick="addStock()">
+                        <i class="fas fa-plus"></i> 添加股票
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">股票分析结果</h5>
+            </div>
+            <div class="card-body">
+                <div id="analysis-result" class="analysis-result" style="display: none;">
+                    <h6 id="analysis-title"></h6>
+                    <div id="analysis-content"></div>
+                </div>
+                <div id="analysis-loading" class="text-center loading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">正在分析股票...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">用户信息</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>用户名:</strong> {{ user.username }}</p>
+                <p>
+                    <strong>邮箱:</strong> {{ user.email }}
+                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="showUpdateEmailModal()">
+                        <i class="fas fa-edit"></i> 修改
+                    </button>
+                </p>
+                <p><strong>订阅股票数:</strong> {{ user.get_subscribed_stocks_list()|length }}</p>
+                
+                <hr>
+                
+                <h6>邮件设置</h6>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="emailNotifications" 
+                           {% if user.email_notifications %}checked{% endif %}
+                           onchange="toggleEmailNotifications()">
+                    <label class="form-check-label" for="emailNotifications">
+                        接收每日分析报告
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加股票模态框 -->
+<div class="modal fade" id="addStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">添加股票</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addStockForm">
+                    <div class="mb-3">
+                        <label for="stockSymbol" class="form-label">股票代码</label>
+                        <input type="text" class="form-control" id="stockSymbol" required>
+                        <div class="form-text">例如: AAPL, GOOGL, MSFT</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitAddStock()">添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 修改邮箱模态框 -->
+<div class="modal fade" id="updateEmailModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">修改邮箱</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="updateEmailForm">
+                    <div class="mb-3">
+                        <label for="newEmail" class="form-label">新邮箱地址</label>
+                        <input type="email" class="form-control" id="newEmail" required
+                               value="{{ user.email }}">
+                        <div class="form-text">请输入有效的新邮箱地址</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitUpdateEmail()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function getRecommendationClass(recommendation) {
+    if (!recommendation) return 'hold';
+    const rec = recommendation.toLowerCase();
+    if (rec === 'buy') return 'buy';
+    if (rec === 'sell') return 'sell';
+    return 'hold';
+}
+
+function getSentimentClass(sentiment) {
+    if (!sentiment) return 'neutral';
+    const sent = sentiment.toLowerCase();
+    if (sent === 'positive') return 'positive';
+    if (sent === 'negative') return 'negative';
+    return 'neutral';
+}
+
+function getRiskClass(risk) {
+    if (!risk) return 'medium';
+    const r = risk.toLowerCase();
+    if (r === 'low') return 'low';
+    if (r === 'high') return 'high';
+    return 'medium';
+}
+
+
+function analyzeStock(symbol) {
+    const resultDiv = document.getElementById('analysis-result');
+    const loadingDiv = document.getElementById('analysis-loading');
+    const titleDiv = document.getElementById('analysis-title');
+    const contentDiv = document.getElementById('analysis-content');
+    
+    resultDiv.style.display = 'none';
+    loadingDiv.style.display = 'block';
+    
+    const token = getCookie("access_token");
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+    }
+    
+    axios.get(`/api/analyze/${symbol}`, { headers: headers })
+    .then(response => {
+        const data = response.data;
+        const analysis = data.analysis || {};
+        const latestData = data.latest_data || {};
+
+        // 设置主标题
+        titleDiv.textContent = `${symbol} 分析报告 (更新于 ${data.analysis_date})`;
+        
+        // 生成关键点列表的HTML
+        const keyPointsHtml = (analysis.key_points && analysis.key_points.length > 0)
+            ? analysis.key_points.map(point => `<li><i class="fas fa-check-circle"></i><span>${point}</span></li>`).join('')
+            : '<li>暂无关键点</li>';
+            
+        // 生成新闻列表的HTML
+        const newsHtml = (data.news && data.news.length > 0)
+            ? data.news.map(news => `<a href="${news.url || '#'}" target="_blank" class="list-group-item list-group-item-action">${news.title}</a>`).join('')
+            : '<li class="list-group-item">暂无相关新闻</li>';
+
+        // 这是全新的HTML结构
+        contentDiv.innerHTML = `
+            <div class="row mb-4">
+                <div class="col-md-4">
+                    <div class="summary-card ${getRecommendationClass(analysis.recommendation)}">
+                        <div class="summary-card-title">投资建议</div>
+                        <div class="summary-card-value">${analysis.recommendation?.toUpperCase() || 'N/A'}</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="summary-card ${getSentimentClass(analysis.overall_sentiment)}">
+                        <div class="summary-card-title">总体评价</div>
+                        <div class="summary-card-value">${analysis.overall_sentiment || 'N/A'}</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="summary-card ${getRiskClass(analysis.risk_level)}">
+                        <div class="summary-card-title">风险水平</div>
+                        <div class="summary-card-value">${analysis.risk_level?.toUpperCase() || 'N/A'}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-lg-8">
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">分析摘要</h5>
+                            <p class="card-text">${analysis.summary || '暂无摘要'}</p>
+                            <hr>
+
+                            <h5 class="card-title mt-4"><i class="fas fa-key me-2"></i>关键点</h5>
+                            <ul class="key-points-list">${keyPointsHtml}</ul>
+                            <hr>
+                            
+                            <h5 class="card-title mt-4">技术分析</h5>
+                            <p class="card-text">${analysis.technical_analysis || '暂无技术分析'}</p>
+                            <hr>
+
+                            <h5 class="card-title mt-4">分析理由</h5>
+                            <p class="card-text">${analysis.reasoning || '暂无分析理由'}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-4">
+                    <div class="card data-card mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">最新日K数据</h5>
+                            <ul>
+                                <li><span>开盘价</span><strong>${latestData.open || 'N/A'}</strong></li>
+                                <li><span>最高价</span><strong>${latestData.high || 'N/A'}</strong></li>
+                                <li><span>最低价</span><strong>${latestData.low || 'N/A'}</strong></li>
+                                <li><span>收盘价</span><strong>${latestData.close || 'N/A'}</strong></li>
+                                <li><span>交易量</span><strong>${latestData.volume?.toLocaleString() || 'N/A'}</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title"><i class="fas fa-newspaper me-2"></i>关键新闻</h5>
+                            <div class="list-group list-group-flush">
+                                ${newsHtml}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        resultDiv.style.display = 'block';
+    })
+    .catch(error => {
+        const errorMessage = error.response?.data?.detail || '分析时发生未知错误，请稍后再试。';
+        titleDiv.textContent = `${symbol} 分析报告`;
+        contentDiv.innerHTML = `<div class="alert alert-danger">${errorMessage}</div>`;
+        resultDiv.style.display = 'block';
+    })
+    .finally(() => {
+        loadingDiv.style.display = 'none';
+    });
+}
+function addStock() {
+    const modal = new bootstrap.Modal(document.getElementById('addStockModal'));
+    modal.show();
+}
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        let cookieValue = parts.pop().split(';').shift();
+        
+        // 处理可能的引号包围
+        if (cookieValue && cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
+            cookieValue = cookieValue.substring(1, cookieValue.length - 1);
+        }
+        
+        // 移除 "Bearer " 前缀，如果存在的话
+        if (cookieValue && cookieValue.startsWith('Bearer%20')) { // URL编码的空格
+            cookieValue = cookieValue.substring(9); 
+        } else if (cookieValue && cookieValue.startsWith('Bearer ')) {
+            cookieValue = cookieValue.substring(7);
+        }
+        
+        return cookieValue;
+    }
+    return null;
+}
+
+function submitAddStock() {
+    const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
+    if (!symbol) return;
+    
+    // 直接发送请求，不需要token和headers
+    axios.post('/api/subscribe', {stock_symbol: symbol})
+    .then(response => {
+        location.reload();
+    })
+    .catch(error => {
+        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+    });
+}
+
+function toggleEmailNotifications() {
+    const enabled = document.getElementById('emailNotifications').checked;
+    // 直接发送请求，不需要token和headers
+    axios.post('/api/toggle-notifications', {enabled: enabled})
+    .then(response => {
+        console.log('邮件通知设置已更新');
+    })
+    .catch(error => {
+        alert('设置更新失败: ' + (error.response?.data?.error || '未知错误'));
+        document.getElementById('emailNotifications').checked = !enabled;
+    });
+}
+
+function deleteStock(symbol) {
+    if (!confirm(`确定要删除股票 ${symbol} 吗？`)) {
+        return;
+    }
+    
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = token;
+    }
+    
+    // 发送带有认证信息的请求
+    axios.delete(`/api/unsubscribe/${symbol}`, { headers: headers })
+    .then(response => {
+        console.log('删除成功:', response.data);
+        // 删除成功后重新加载页面
+        location.reload();
+    })
+    .catch(error => {
+        console.error('删除失败:', error.response?.data?.detail || '未知错误');
+        alert('删除失败: ' + (error.response?.data?.detail || '未知错误'));
+    });
+}
+
+function showUpdateEmailModal() {
+    const modal = new bootstrap.Modal(document.getElementById('updateEmailModal'));
+    modal.show();
+}
+
+function submitUpdateEmail() {
+    const newEmail = document.getElementById('newEmail').value.trim();
+    
+    if (!newEmail) {
+        alert('请输入邮箱地址');
+        return;
+    }
+    
+    // 获取cookie中的token
+    const token = getCookie("access_token");
+    
+    // 创建包含token的请求头
+    const headers = {};
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+        headers["Content-Type"] = "application/json";
+    }
+    
+    // 发送邮箱更新请求
+    axios.put('/api/users/me/email', { email: newEmail }, { headers: headers })
+    .then(response => {
+        alert('邮箱更新成功！');
+        // 关闭模态框并重新加载页面
+        const modal = bootstrap.Modal.getInstance(document.getElementById('updateEmailModal'));
+        modal.hide();
+        location.reload();
+    })
+    .catch(error => {
+        const errorMessage = error.response?.data?.detail || '更新失败';
+        alert('邮箱更新失败: ' + errorMessage);
+    });
+}
+</script>
+{% endblock %}
 </file>
 
 </files>
