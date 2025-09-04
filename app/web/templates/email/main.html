@@ -4,114 +4,150 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>每日股票分析摘要</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: #f8f9fa;
-            margin: 0;
-            padding: 20px;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 0 auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        .email-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px 20px;
-            text-align: center;
-        }
-        .email-header h1 {
-            margin: 0;
-            font-size: 28px;
-            font-weight: bold;
-        }
-        .email-header p {
-            margin: 10px 0 0 0;
-            opacity: 0.9;
-        }
-        .email-content {
-            padding: 30px;
-        }
-        .greeting {
-            margin-bottom: 25px;
-            color: #666;
-        }
-        .date-info {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 25px;
-            text-align: center;
-            border-left: 4px solid #3498db;
-        }
-        .stock-cards-container {
-            margin: 0 -10px;
-        }
-        .footer {
-            background-color: #f8f9fa;
-            padding: 20px;
-            text-align: center;
-            border-top: 1px solid #e9ecef;
-            color: #666;
-            font-size: 14px;
-        }
-        .footer p {
-            margin: 5px 0;
-        }
-        .disclaimer {
-            font-size: 12px;
-            color: #999;
-            margin-top: 15px;
-        }
-        .unsubscribe {
-            margin-top: 10px;
-            font-size: 12px;
-        }
-        .unsubscribe a {
-            color: #666;
-            text-decoration: none;
-        }
-    </style>
 </head>
-<body>
-    <div class="email-container">
-        <div class="email-header">
-            <h1>📈 每日股票分析摘要</h1>
-            <p>为您提供最新的投资洞察</p>
-        </div>
-        
-        <div class="email-content">
-            <div class="greeting">
-                <h2>尊敬的投资者，您好！</h2>
-                <p>以下是您订阅股票的最新分析摘要：</p>
-            </div>
-            
-            <div class="date-info">
-                <strong>分析日期：{{ analysis_date }}</strong>
-            </div>
-            
-            <div class="stock-cards-container">
-                {stock_cards}
-            </div>
-        </div>
-        
-        <div class="footer">
-            <p>💡 温馨提示：投资有风险，入市需谨慎</p>
-            <p>📧 本邮件由 Stock News Analyzer 系统自动生成</p>
-            <div class="disclaimer">
-                本分析报告仅供参考，不构成投资建议。市场有风险，投资需谨慎。
-            </div>
-            <div class="unsubscribe">
-                <a href="{{ unsubscribe_url }}">取消订阅邮件通知</a>
-            </div>
-        </div>
-    </div>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333333; background-color: #f8f9fa; margin: 0; padding: 20px;">
+    <!-- 外层容器 -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8f9fa;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <!-- 邮件内容容器 -->
+                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                    <!-- 邮件头部 -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center;">
+                            <h1 style="margin: 0; font-size: 28px; font-weight: bold;">📈 每日股票分析摘要</h1>
+                            <p style="margin: 10px 0 0 0; opacity: 0.9;">为您提供最新的投资洞察</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- 邮件内容 -->
+                    <tr>
+                        <td style="padding: 30px;">
+                            <!-- 问候语 -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="margin-bottom: 25px; color: #666666;">
+                                        <h2 style="margin: 0 0 10px 0;">尊敬的投资者，您好！</h2>
+                                        <p style="margin: 0;">以下是您订阅股票的最新分析摘要：</p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- 日期信息 -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="background-color: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 25px; text-align: center; border-left: 4px solid #3498db;">
+                                        <strong>分析日期：{{ analysis_date }}</strong>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- 股票卡片容器 -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td>
+                                        {% for analysis in analyses %}
+                                        <!-- Spacer -->
+                                        <tr><td height="20" style="font-size: 20px; line-height: 20px;">&nbsp;</td></tr>
+                                        <!-- 单个股票卡片 -->
+                                        <tr>
+                                            <td>
+                                                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); border: 1px solid #e9ecef;">
+                                                    <!-- 卡片内容 -->
+                                                    <tr>
+                                                        <td style="padding: 20px;">
+                                                            <!-- 股票头部 -->
+                                                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="padding-bottom: 15px; border-bottom: 2px solid #f8f9fa;">
+                                                                <tr>
+                                                                    <td width="50%" valign="middle">
+                                                                        <p style="font-size: 24px; font-weight: bold; color: #2c3e50; margin: 0;">{{ analysis.stock_symbol }}</p>
+                                                                    </td>
+                                                                    <td width="50%" align="right" valign="middle">
+                                                                        <span style="padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; text-transform: uppercase; {% if analysis.overall_sentiment == 'positive' %}background-color: #d4edda; color: #155724;{% elif analysis.overall_sentiment == 'negative' %}background-color: #f8d7da; color: #721c24;{% else %}background-color: #fff3cd; color: #856404;{% endif %}">{{ analysis.overall_sentiment }}</span>
+                                                                        <span style="padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-left: 8px; {% if analysis.recommendation == 'buy' %}background-color: #d4edda; color: #155724;{% elif analysis.recommendation == 'sell' %}background-color: #f8d7da; color: #721c24;{% else %}background-color: #fff3cd; color: #856404;{% endif %}">{{ analysis.recommendation }}</span>
+                                                                        {% if analysis.risk_level %}<span style="font-size: 12px; padding: 4px 8px; border-radius: 12px; margin-left: 8px; {% if analysis.risk_level == 'high' %}background-color: #f8d7da; color: #721c24;{% elif analysis.risk_level == 'medium' %}background-color: #fff3cd; color: #856404;{% else %}background-color: #d4edda; color: #155724;{% endif %}">{{ analysis.risk_level }}风险</span>{% endif %}
+                                                                    </td>
+                                                                </tr>
+                                                            </table>
+                                                        </td>
+                                                    </tr>
+                                                    <!-- Spacer -->
+                                                    <tr><td height="15" style="font-size: 15px; line-height: 15px;">&nbsp;</td></tr>
+                                                    <!-- 指标行 -->
+                                                    <tr>
+                                                        <td style="padding: 0 20px;">
+                                                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                                <tr>
+                                                                    <td width="33%" align="center" valign="top">
+                                                                        <p style="font-size: 12px; color: #6c757d; margin: 0 0 5px 0;">最新价格</p>
+                                                                        <p style="font-size: 16px; font-weight: bold; margin: 0;">{{ analysis.latest_price.close|default('N/A') }}</p>
+                                                                    </td>
+                                                                    <td width="34%" align="center" valign="top">
+                                                                        <p style="font-size: 12px; color: #6c757d; margin: 0 0 5px 0;">涨跌幅</p>
+                                                                        <p style="font-size: 16px; font-weight: bold; margin: 0; {% if analysis.latest_price.change_percent != 'N/A' and analysis.latest_price.change_percent > 0 %}color: #28a745;{% elif analysis.latest_price.change_percent != 'N/A' and analysis.latest_price.change_percent < 0 %}color: #dc3545;{% endif %}">{{ analysis.latest_price.change_percent|default('N/A') }}{% if analysis.latest_price.change_percent != 'N/A' %}%{% endif %}</p>
+                                                                    </td>
+                                                                    <td width="33%" align="center" valign="top">
+                                                                        <p style="font-size: 12px; color: #6c757d; margin: 0 0 5px 0;">交易量</p>
+                                                                        <p style="font-size: 16px; font-weight: bold; margin: 0;">{{ analysis.latest_price.volume|default('N/A') }}</p>
+                                                                    </td>
+                                                                </tr>
+                                                            </table>
+                                                        </td>
+                                                    </tr>
+                                                    <!-- Spacer -->
+                                                    <tr><td height="15" style="font-size: 15px; line-height: 15px;">&nbsp;</td></tr>
+                                                    <!-- 摘要 -->
+                                                    <tr>
+                                                        <td style="padding: 0 20px;">
+                                                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                                <tr>
+                                                                    <td style="background-color: #f8f9fa; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db;">
+                                                                        <p style="margin: 0; line-height: 1.5;"><strong>核心摘要：</strong>{{ analysis.summary|default('暂无摘要信息') }}</p>
+                                                                    </td>
+                                                                </tr>
+                                                            </table>
+                                                        </td>
+                                                    </tr>
+                                                    <!-- Spacer -->
+                                                    <tr><td height="20" style="font-size: 20px; line-height: 20px;">&nbsp;</td></tr>
+                                                    <!-- 查看报告按钮 -->
+                                                    <tr>
+                                                        <td style="padding: 0 20px 20px 20px;">
+                                                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                                <tr>
+                                                                    <td>
+                                                                        <a href="{{ analysis.report_url }}" target="_blank" style="display: block; width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 6px; text-align: center; font-weight: bold; border: none; cursor: pointer;">📊 查看完整分析报告</a>
+                                                                    </td>
+                                                                </tr>
+                                                            </table>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- 邮件底部 -->
+                    <tr>
+                        <td style="background-color: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #e9ecef; color: #666666; font-size: 14px;">
+                            <p style="margin: 5px 0;">💡 温馨提示：投资有风险，入市需谨慎</p>
+                            <p style="margin: 5px 0;">📧 本邮件由 Stock News Analyzer 系统自动生成</p>
+                            <div style="font-size: 12px; color: #999999; margin-top: 15px;">
+                                本分析报告仅供参考，不构成投资建议。市场有风险，投资需谨慎。
+                            </div>
+                            <div style="margin-top: 10px; font-size: 12px;">
+                                <a href="{{ unsubscribe_url }}" style="color: #666666; text-decoration: none;">取消订阅邮件通知</a>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>

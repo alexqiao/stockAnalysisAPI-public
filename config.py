@@ -34,3 +34,6 @@ class Config:
     
     # 定时任务配置
     DAILY_REPORT_TIME = os.getenv("DAILY_REPORT_TIME", "09:00")
+
+    # 站点基础URL
+    BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
