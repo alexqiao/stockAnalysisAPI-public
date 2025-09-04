@@ -91,6 +91,44 @@
     .data-card ul li:last-child {
         border-bottom: none;
     }
+
+    /* 自动补全样式 */
+    .search-container {
+        position: relative;
+    }
+    #searchResults {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #ced4da;
+        border-top: none;
+        border-radius: 0 0 0.375rem 0.375rem;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 1000;
+        display: none;
+    }
+    .search-result-item {
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        border-bottom: 1px solid #f8f9fa;
+    }
+    .search-result-item:hover {
+        background-color: #f8f9fa;
+    }
+    .search-result-item:last-child {
+        border-bottom: none;
+    }
+    .symbol-text {
+        font-weight: bold;
+        color: #495057;
+    }
+    .name-text {
+        font-size: 0.875rem;
+        color: #6c757d;
+    }
 </style>
 {% endblock %}
 
@@ -189,9 +227,15 @@
             <div class="modal-body">
                 <form id="addStockForm">
                     <div class="mb-3">
-                        <label for="stockSymbol" class="form-label">股票代码</label>
-                        <input type="text" class="form-control" id="stockSymbol" required>
-                        <div class="form-text">例如: AAPL, GOOGL, MSFT</div>
+                        <label for="stockSearchInput" class="form-label">搜索股票</label>
+                        <div class="search-container">
+                            <input type="text" class="form-control" id="stockSearchInput" 
+                                   placeholder="输入股票名称或代码..." 
+                                   oninput="searchSymbols(event)"
+                                   required>
+                            <div id="searchResults" class="search-results"></div>
+                        </div>
+                        <div class="form-text">开始输入股票名称或代码进行搜索</div>
                     </div>
                 </form>
             </div>
@@ -402,20 +446,6 @@ function getCookie(name) {
     return null;
 }
 
-function submitAddStock() {
-    const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
-    if (!symbol) return;
-    
-    // 直接发送请求，不需要token和headers
-    axios.post('/api/subscribe', {stock_symbol: symbol})
-    .then(response => {
-        location.reload();
-    })
-    .catch(error => {
-        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
-    });
-}
-
 function toggleEmailNotifications() {
     const enabled = document.getElementById('emailNotifications').checked;
     // 直接发送请求，不需要token和headers
@@ -493,5 +523,101 @@ function submitUpdateEmail() {
         alert('邮箱更新失败: ' + errorMessage);
     });
 }
+
+// 自动补全功能
+let searchTimeout = null;
+
+function searchSymbols(event) {
+    const keyword = event.target.value.trim();
+    const resultsContainer = document.getElementById('searchResults');
+    
+    // 清除之前的定时器
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+    
+    // 如果关键词为空，隐藏结果
+    if (!keyword) {
+        resultsContainer.style.display = 'none';
+        return;
+    }
+    
+    // 设置防抖，延迟300毫秒后执行搜索
+    searchTimeout = setTimeout(() => {
+        const token = getCookie("access_token");
+        const headers = {};
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        
+        axios.get(`/api/search-symbols?keyword=${encodeURIComponent(keyword)}`, { headers: headers })
+            .then(response => {
+                const results = response.data;
+                displaySearchResults(results);
+            })
+            .catch(error => {
+                console.error('搜索失败:', error);
+                resultsContainer.style.display = 'none';
+            });
+    }, 300);
+}
+
+function displaySearchResults(results) {
+    const resultsContainer = document.getElementById('searchResults');
+    
+    if (results.length === 0) {
+        resultsContainer.style.display = 'none';
+        return;
+    }
+    
+    // 生成结果HTML
+    const resultsHtml = results.map(result => `
+        <div class="search-result-item" onclick="selectSymbol('${result.symbol}', '${result.name.replace(/'/g, "\\'")}')">
+            <div class="symbol-text">${result.symbol}</div>
+            <div class="name-text">${result.name}</div>
+        </div>
+    `).join('');
+    
+    resultsContainer.innerHTML = resultsHtml;
+    resultsContainer.style.display = 'block';
+}
+
+function selectSymbol(symbol, name) {
+    const searchInput = document.getElementById('stockSearchInput');
+    const resultsContainer = document.getElementById('searchResults');
+    
+    // 填入选中的符号
+    searchInput.value = symbol;
+    
+    // 隐藏结果容器
+    resultsContainer.style.display = 'none';
+    
+    // 可选：显示选中的名称作为提示
+    searchInput.setAttribute('title', name);
+}
+
+function submitAddStock() {
+    const symbol = document.getElementById('stockSearchInput').value.trim().toUpperCase();
+    if (!symbol) return;
+    
+    // 直接发送请求，不需要token和headers
+    axios.post('/api/subscribe', {stock_symbol: symbol})
+    .then(response => {
+        location.reload();
+    })
+    .catch(error => {
+        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+    });
+}
+
+// 点击模态框外部时隐藏搜索结果
+document.addEventListener('click', function(event) {
+    const searchContainer = document.querySelector('.search-container');
+    const resultsContainer = document.getElementById('searchResults');
+    
+    if (searchContainer && !searchContainer.contains(event.target)) {
+        resultsContainer.style.display = 'none';
+    }
+});
 </script>
 {% endblock %}

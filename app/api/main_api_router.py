@@ -9,6 +9,7 @@ from app.core.security import authenticate_user, create_access_token, get_curren
 from services.alpha_vantage_api import AlphaVantageAPI
 from services.ai_analyzer import AIAnalyzer
 from services.email_service import EmailService
+from services.symbol_service import stock_symbol_service
 from typing import List
 
 router = APIRouter()
@@ -252,3 +253,18 @@ def toggle_email_notifications(
     current_user.email_notifications = enabled
     db.commit()
     return {"message": "Email notifications updated", "enabled": enabled}
+
+@router.get("/search-symbols")
+def search_symbols(
+    keyword: str,
+    current_user: User = Depends(get_current_user_from_cookie_or_header)
+):
+    """搜索股票符号"""
+    try:
+        results = stock_symbol_service.search(keyword)
+        return results
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"搜索股票符号时发生错误: {str(e)}"
+        )

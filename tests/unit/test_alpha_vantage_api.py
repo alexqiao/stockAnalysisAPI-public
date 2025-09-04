@@ -141,3 +141,97 @@ class TestAlphaVantageAPI:
         monkeypatch.delenv("ALPHA_VANTAGE_API_KEY", raising=False)
         with pytest.raises(ValueError, match="ALPHA_VANTAGE_API_KEY not found"):
             AlphaVantageAPI()
+
+    @responses.activate
+    def test_search_symbols_success(self):
+        """测试成功搜索股票符号"""
+        keywords = "Apple"
+        mock_response = {
+            "bestMatches": [
+                {
+                    "1. symbol": "AAPL",
+                    "2. name": "Apple Inc.",
+                    "3. type": "Equity",
+                    "4. region": "United States",
+                    "5. marketOpen": "09:30",
+                    "6. marketClose": "16:00",
+                    "7. timezone": "UTC-05",
+                    "8. currency": "USD",
+                    "9. matchScore": "1.0000"
+                },
+                {
+                    "1. symbol": "APLE",
+                    "2. name": "Apple Hospitality REIT Inc.",
+                    "3. type": "Equity",
+                    "4. region": "United States",
+                    "5. marketOpen": "09:30",
+                    "6. marketClose": "16:00",
+                    "7. timezone": "UTC-05",
+                    "8. currency": "USD",
+                    "9. matchScore": "0.8000"
+                }
+            ]
+        }
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.search_symbols(keywords)
+        
+        assert result is not None
+        assert len(result) == 2
+        assert result[0]["symbol"] == "AAPL"
+        assert result[0]["name"] == "Apple Inc."
+        assert result[1]["symbol"] == "APLE"
+        assert result[1]["name"] == "Apple Hospitality REIT Inc."
+
+    @responses.activate
+    def test_search_symbols_no_matches(self):
+        """测试搜索无匹配结果的情况"""
+        keywords = "InvalidCompany"
+        mock_response = {"bestMatches": []}
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.search_symbols(keywords)
+        assert result == []
+
+    @responses.activate
+    def test_search_symbols_no_best_matches_field(self):
+        """测试响应中没有bestMatches字段的情况"""
+        keywords = "Test"
+        mock_response = {"Error Message": "Invalid API call"}
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.search_symbols(keywords)
+        assert result == []
+
+    @responses.activate
+    def test_search_symbols_api_error(self):
+        """测试API错误处理"""
+        keywords = "Apple"
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json={"error": "API limit reached"},
+            status=429
+        )
+        
+        result = self.api.search_symbols(keywords)
+        assert result == []
