@@ -19,6 +19,8 @@ class UserUpdateEmail(BaseModel):
 class UserResponse(UserBase):
     id: int
     is_active: bool
+    tier: str
+    subscription_expires_at: Optional[datetime] = None
     created_at: datetime
     
     class Config:

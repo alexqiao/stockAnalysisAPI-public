@@ -104,6 +104,18 @@ def subscribe_stock(
     db: Session = Depends(get_db)
 ):
     """订阅股票"""
+    # 获取当前用户的订阅数量
+    subscription_count = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id
+    ).count()
+    
+    # 检查用户等级和订阅限制
+    if current_user.tier == 'free' and subscription_count >= 5:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="免费用户最多只能添加5支股票，请升级您的账户。"
+        )
+    
     # 检查是否已订阅
     existing = db.query(Subscription).filter(
         Subscription.user_id == current_user.id,

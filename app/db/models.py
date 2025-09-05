@@ -15,6 +15,8 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     email_notifications = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False, nullable=False) 
+    tier = Column(String(20), default='free')
+    subscription_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")

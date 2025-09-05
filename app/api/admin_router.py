@@ -56,3 +56,21 @@ def remove_subscription_for_user(user_id: int, symbol: str, db: Session = Depend
     db.delete(sub)
     db.commit()
     return {"message": "成功删除订阅"}
+
+@router.post("/users/{user_id}/upgrade", response_model=UserResponse)
+def upgrade_user_tier(user_id: int, db: Session = Depends(get_db)):
+    """升级用户等级到 premium"""
+    from datetime import datetime, timedelta
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="未找到用户")
+    
+    # 升级用户等级
+    user.tier = 'premium'
+    # 设置订阅到期时间为一年后
+    user.subscription_expires_at = datetime.utcnow() + timedelta(days=365)
+    
+    db.commit()
+    db.refresh(user)
+    return user

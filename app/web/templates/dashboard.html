@@ -606,7 +606,13 @@ function submitAddStock() {
         location.reload();
     })
     .catch(error => {
-        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+        if (error.response?.status === 403) {
+            // 对于403错误，显示服务器返回的详细错误信息
+            alert(error.response?.data?.detail || '免费用户最多只能添加5支股票，请升级您的账户。');
+        } else {
+            // 对于其他错误，保持现有的通用错误提示
+            alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+        }
     });
 }
 
