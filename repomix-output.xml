@@ -124,6 +124,561 @@ run.py
 <files>
 This section contains the contents of the repository's files.
 
+<file path="app/db/database.py">
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from app.db.models import Base
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./stock_app.db")
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+</file>
+
+<file path="app/web/templates/base.html">
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Stock News Analyzer{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        .navbar-brand {
+            font-weight: bold;
+            color: #2c3e50 !important;
+        }
+        .card {
+            border: none;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            border-radius: 0.5rem;
+        }
+        .btn-primary {
+            background-color: #3498db;
+            border-color: #3498db;
+        }
+        .btn-primary:hover {
+            background-color: #2980b9;
+            border-color: #2980b9;
+        }
+        .stock-card {
+            transition: transform 0.2s;
+        }
+        .stock-card:hover {
+            transform: translateY(-2px);
+        }
+        .news-item {
+            border-left: 3px solid #3498db;
+            padding-left: 1rem;
+            margin-bottom: 1rem;
+        }
+        .loading {
+            display: none;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-chart-line me-2"></i>Stock News Analyzer
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    {% if user %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="/dashboard">仪表盘</a>
+                        </li>
+                        <li class="nav-item">
+                            <form action="/logout" method="post" class="d-inline">
+                                <button type="submit" class="btn btn-link nav-link" style="border: none; background: none;">
+                                    退出登录
+                                </button>
+                            </form>
+                        </li>
+                    {% else %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="/login">登录</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/register">注册</a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container my-4">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="bg-light text-center py-4 mt-5">
+        <div class="container">
+            <p class="text-muted mb-0">&copy; 2024 Stock News Analyzer. 投资有风险，入市需谨慎。</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
+</file>
+
+<file path="app/web/templates/detailed_analysis.html">
+{% extends "base.html" %}
+
+{% block title %}{{ analysis.symbol }} 详细分析 - Stock News Analyzer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .summary-card {
+        border: 1px solid #e9ecef;
+        border-left-width: 5px;
+        border-radius: 0.5rem;
+        padding: 1.25rem;
+        height: 100%;
+    }
+    .summary-card-title {
+        font-size: 0.9rem;
+        color: #6c757d;
+        margin-bottom: 0.25rem;
+        font-weight: 500;
+    }
+    .summary-card-value {
+        font-size: 1.75rem;
+        font-weight: bold;
+    }
+    /* 颜色编码 */
+    .summary-card.hold { border-left-color: #ffc107; }
+    .summary-card.hold .summary-card-value { color: #ffc107; }
+    .summary-card.buy { border-left-color: #198754; }
+    .summary-card.buy .summary-card-value { color: #198754; }
+    .summary-card.sell { border-left-color: #dc3545; }
+    .summary-card.sell .summary-card-value { color: #dc3545; }
+
+    .summary-card.positive { border-left-color: #198754; }
+    .summary-card.positive .summary-card-value { color: #198754; }
+    .summary-card.negative { border-left-color: #dc3545; }
+    .summary-card.negative .summary-card-value { color: #dc3545; }
+    .summary-card.neutral { border-left-color: #6c757d; }
+    .summary-card.neutral .summary-card-value { color: #6c757d; }
+
+    .summary-card.medium { border-left-color: #fd7e14; }
+    .summary-card.medium .summary-card-value { color: #fd7e14; }
+    .summary-card.low { border-left-color: #198754; }
+    .summary-card.low .summary-card-value { color: #198754; }
+    .summary-card.high { border-left-color: #dc3545; }
+    .summary-card.high .summary-card-value { color: #dc3545; }
+
+    .key-points-list {
+        list-style: none;
+        padding-left: 0;
+    }
+    .key-points-list li {
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: flex-start;
+    }
+    .key-points-list li .fa-check-circle {
+        color: #3498db;
+        margin-right: 10px;
+        margin-top: 5px;
+    }
+    .data-card {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+    }
+    .data-card ul li {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .data-card ul li:last-child {
+        border-bottom: none;
+    }
+    .news-item {
+        border-left: 3px solid #3498db;
+        padding-left: 1rem;
+        margin-bottom: 1rem;
+    }
+    .back-button {
+        margin-bottom: 1.5rem;
+    }
+    .analysis-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 0.5rem;
+        margin-bottom: 2rem;
+    }
+    .metric-card {
+        background: white;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        margin-bottom: 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="back-button">
+    <a href="/dashboard" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-2"></i>返回仪表盘
+    </a>
+</div>
+
+<div class="analysis-header">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h1 class="display-5 fw-bold">{{ analysis.symbol }}</h1>
+            <p class="lead mb-0">详细分析报告</p>
+            <p class="mb-0">分析日期: {{ analysis.analysis_date }}</p>
+        </div>
+        <div class="col-md-4 text-md-end">
+            <div class="d-flex justify-content-md-end gap-3">
+                <div class="text-center">
+                    <div class="fs-6">股票代码</div>
+                    <div class="fs-3 fw-bold">{{ analysis.symbol }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="summary-card {% if analysis.analysis_result.recommendation %}{% if analysis.analysis_result.recommendation|lower == 'buy' %}buy{% elif analysis.analysis_result.recommendation|lower == 'sell' %}sell{% else %}hold{% endif %}{% else %}hold{% endif %}">
+            <div class="summary-card-title">投资建议</div>
+            <div class="summary-card-value">{{ analysis.analysis_result.recommendation|default('N/A')|upper }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="summary-card {% if analysis.analysis_result.overall_sentiment %}{% if analysis.analysis_result.overall_sentiment|lower == 'positive' %}positive{% elif analysis.analysis_result.overall_sentiment|lower == 'negative' %}negative{% else %}neutral{% endif %}{% else %}neutral{% endif %}">
+            <div class="summary-card-title">总体评价</div>
+            <div class="summary-card-value">{{ analysis.analysis_result.overall_sentiment|default('N/A') }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="summary-card {% if analysis.analysis_result.risk_level %}{% if analysis.analysis_result.risk_level|lower == 'low' %}low{% elif analysis.analysis_result.risk_level|lower == 'high' %}high{% else %}medium{% endif %}{% else %}medium{% endif %}">
+            <div class="summary-card-title">风险水平</div>
+            <div class="summary-card-value">{{ analysis.analysis_result.risk_level|default('N/A')|upper }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <!-- 分析摘要 -->
+        <div class="metric-card">
+            <h4><i class="fas fa-file-alt me-2"></i>分析摘要</h4>
+            <p class="mb-0">{{ analysis.analysis_result.summary|default('暂无分析摘要') }}</p>
+        </div>
+
+        <!-- 关键点 -->
+        {% if analysis.analysis_result.key_points and analysis.analysis_result.key_points|length > 0 %}
+        <div class="metric-card">
+            <h4><i class="fas fa-key me-2"></i>关键点</h4>
+            <ul class="key-points-list">
+                {% for point in analysis.analysis_result.key_points %}
+                <li><i class="fas fa-check-circle"></i><span>{{ point }}</span></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- 技术分析 -->
+        {% if analysis.analysis_result.technical_analysis %}
+        <div class="metric-card">
+            <h4><i class="fas fa-chart-line me-2"></i>技术分析</h4>
+            <p class="mb-0">{{ analysis.analysis_result.technical_analysis }}</p>
+        </div>
+        {% endif %}
+
+        <!-- 分析理由 -->
+        {% if analysis.analysis_result.reasoning %}
+        <div class="metric-card">
+            <h4><i class="fas fa-lightbulb me-2"></i>分析理由</h4>
+            <p class="mb-0">{{ analysis.analysis_result.reasoning }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-4">
+        <!-- 最新价格数据 -->
+        <div class="metric-card">
+            <h4><i class="fas fa-chart-bar me-2"></i>最新日K数据</h4>
+            <div class="data-card">
+                <ul>
+                    <li><span>开盘价</span><strong>{{ analysis.latest_price_data.open|default('N/A') }}</strong></li>
+                    <li><span>最高价</span><strong>{{ analysis.latest_price_data.high|default('N/A') }}</strong></li>
+                    <li><span>最低价</span><strong>{{ analysis.latest_price_data.low|default('N/A') }}</strong></li>
+                    <li><span>收盘价</span><strong>{{ analysis.latest_price_data.close|default('N/A') }}</strong></li>
+                    <li><span>交易量</span><strong>{{ analysis.latest_price_data.volume|default('N/A') }}</strong></li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 相关新闻 -->
+        {% if analysis.news_data and analysis.news_data|length > 0 %}
+        <div class="metric-card">
+            <h4><i class="fas fa-newspaper me-2"></i>相关新闻</h4>
+            <div class="list-group list-group-flush">
+                {% for news in analysis.news_data %}
+                <a href="{{ news.url|default('#') }}" target="_blank" class="list-group-item list-group-item-action">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h6 class="mb-1">{{ news.title|default('无标题') }}</h6>
+                    </div>
+                    {% if news.published_at %}
+                    <small class="text-muted">{{ news.published_at }}</small>
+                    {% endif %}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function get_recommendation_class(recommendation) {
+    if (!recommendation) return 'hold';
+    const rec = recommendation.toLowerCase();
+    if (rec === 'buy') return 'buy';
+    if (rec === 'sell') return 'sell';
+    return 'hold';
+}
+
+function get_sentiment_class(sentiment) {
+    if (!sentiment) return 'neutral';
+    const sent = sentiment.toLowerCase();
+    if (sent === 'positive') return 'positive';
+    if (sent === 'negative') return 'negative';
+    return 'neutral';
+}
+
+function get_risk_class(risk) {
+    if (!risk) return 'medium';
+    const r = risk.toLowerCase();
+    if (r === 'low') return 'low';
+    if (r === 'high') return 'high';
+    return 'medium';
+}
+</script>
+{% endblock %}
+</file>
+
+<file path="app/web/templates/home.html">
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="text-center py-5">
+            <h1 class="display-4 fw-bold text-primary mb-4">
+                <i class="fas fa-chart-line"></i> Stock News Analyzer
+            </h1>
+            <p class="lead text-muted mb-5">
+                AI驱动的股票新闻分析平台，为您提供实时的股票新闻分析和投资建议
+            </p>
+            
+            <div class="row g-4 mb-5">
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-body text-center">
+                            <i class="fas fa-newspaper fa-3x text-primary mb-3"></i>
+                            <h5 class="card-title">实时新闻</h5>
+                            <p class="card-text">获取最新的股票相关新闻和资讯</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-body text-center">
+                            <i class="fas fa-brain fa-3x text-primary mb-3"></i>
+                            <h5 class="card-title">AI分析</h5>
+                            <p class="card-text">基于AI的智能分析和投资建议</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-body text-center">
+                            <i class="fas fa-envelope fa-3x text-primary mb-3"></i>
+                            <h5 class="card-title">邮件推送</h5>
+                            <p class="card-text">每日定时推送分析报告到您的邮箱</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="d-grid gap-2 d-md-flex justify-content-center">
+                <a href="/register" class="btn btn-primary btn-lg px-4 me-md-2">
+                    <i class="fas fa-user-plus me-2"></i>立即注册
+                </a>
+                <a href="/login" class="btn btn-outline-primary btn-lg px-4">
+                    <i class="fas fa-sign-in-alt me-2"></i>登录
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+</file>
+
+<file path="app/web/templates/login.html">
+{% extends "base.html" %}
+
+{% block title %}登录 - Stock News Analyzer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="card-title text-center mb-4">用户登录</h2>
+                
+                {% if error %}
+                <div class="alert alert-danger" role="alert">
+                    {{ error }}
+                </div>
+                {% endif %}
+                
+                <form method="post" action="/login" id="loginForm">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">用户名</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">密码</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100" id="loginBtn">
+                        <span id="loginText">登录</span>
+                        <span id="loadingSpinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    </button>
+                </form>
+                
+                <div class="text-center mt-3">
+                    <p>还没有账户？ <a href="/register">立即注册</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', function(e) {
+    const loginBtn = document.getElementById('loginBtn');
+    const loginText = document.getElementById('loginText');
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    
+    // 禁用按钮并显示加载状态
+    loginBtn.disabled = true;
+    loginText.classList.add('d-none');
+    loadingSpinner.classList.remove('d-none');
+    
+    // 表单会继续正常提交
+});
+</script>
+
+<style>
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+}
+</style>
+{% endblock %}
+</file>
+
+<file path="app/web/templates/register.html">
+{% extends "base.html" %}
+
+{% block title %}注册 - Stock News Analyzer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="card-title text-center mb-4">注册新账户</h2>
+                
+                {% if error %}
+                <div class="alert alert-danger" role="alert">
+                    {{ error }}
+                </div>
+                {% endif %}
+                
+                <form method="post">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">用户名</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="email" class="form-label">邮箱地址</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">密码</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="stocks" class="form-label">订阅股票代码</label>
+                        <input type="text" class="form-control" id="stocks" name="stocks" 
+                               placeholder="例如: AAPL,GOOGL,MSFT" required>
+                        <div class="form-text">多个股票代码用逗号分隔</div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">注册</button>
+                </form>
+                
+                <div class="text-center mt-3">
+                    <p>已有账户？ <a href="/login">立即登录</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+</file>
+
+<file path="app/__init__.py">
+# 这是一个空文件，用于将app目录标记为Python包
+# FastAPI应用的主要配置在run.py中
+</file>
+
 <file path="data/stock.txt">
 Symbol|Security Name|Market Category|Test Issue|Financial Status|Round Lot Size|ETF|NextShares
 AACB|Artius II Acquisition Inc. - Class A Ordinary Shares|G|N|N|100|N|N
@@ -5189,689 +5744,6 @@ ZYXI|Zynex, Inc. - Common Stock|Q|N|N|100|N|N
 File Creation Time: 0903202521:31|||||||
 </file>
 
-<file path="services/symbol_service.py">
-class StockSymbolService:
-    def __init__(self):
-        """Initialize the service by loading stock data from data/stock.txt"""
-        self.stocks = []
-        self._load_stock_data()
-    
-    def _load_stock_data(self):
-        """Load stock data from file and parse into list of dictionaries"""
-        import os
-        
-        # Get absolute path to data/stock.txt
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        file_path = os.path.join(base_dir, 'data', 'stock.txt')
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                # Skip the header line
-                next(file)
-                
-                for line in file:
-                    line = line.strip()
-                    if line:
-                        parts = line.split('|')
-                        if len(parts) >= 2:
-                            symbol = parts[0].strip()
-                            name = parts[1].strip()
-                            self.stocks.append({
-                                'symbol': symbol,
-                                'name': name
-                            })
-        except FileNotFoundError:
-            print(f"Warning: {file_path} file not found")
-        except Exception as e:
-            print(f"Error loading stock data: {e}")
-    
-    def search(self, keyword):
-        """
-        Search for stocks where symbol or name contains the keyword (case-insensitive)
-        
-        Args:
-            keyword (str): The search keyword
-            
-        Returns:
-            list: List of matching stock dictionaries (max 10 results)
-        """
-        if not keyword:
-            return []
-        
-        keyword_lower = keyword.lower()
-        results = []
-        
-        for stock in self.stocks:
-            if (keyword_lower in stock['symbol'].lower() or 
-                keyword_lower in stock['name'].lower()):
-                results.append(stock)
-                
-                # Limit to 10 results
-                if len(results) >= 10:
-                    break
-        
-        return results
-
-# Create singleton instance
-stock_symbol_service = StockSymbolService()
-</file>
-
-<file path="app/api/admin_router.py">
-# app/api/admin_router.py
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
-
-from app.db.database import get_db
-from app.db.models import User, Subscription
-from app.schemas import UserResponse, SubscriptionResponse, SubscriptionCreate
-from app.core.security import get_current_admin_user
-
-router = APIRouter(
-    prefix="/admin",
-    tags=["Admin"],
-    dependencies=[Depends(get_current_admin_user)] # 关键：此路由下的所有端点都需要管理员权限
-)
-
-@router.get("/users", response_model=List[UserResponse])
-def list_users(db: Session = Depends(get_db)):
-    """获取所有用户列表"""
-    return db.query(User).all()
-
-@router.get("/users/{user_id}/subscriptions", response_model=List[SubscriptionResponse])
-def get_user_subscriptions(user_id: int, db: Session = Depends(get_db)):
-    """查看指定用户的股票订阅"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="未找到用户")
-    return user.subscriptions
-
-@router.post("/users/{user_id}/subscriptions", response_model=SubscriptionResponse)
-def add_subscription_for_user(user_id: int, subscription: SubscriptionCreate, db: Session = Depends(get_db)):
-    """为指定用户添加股票订阅"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="未找到用户")
-
-    # 检查是否已订阅
-    existing = db.query(Subscription).filter_by(user_id=user_id, stock_symbol=subscription.stock_symbol.upper()).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="该用户已订阅此股票")
-
-    db_sub = Subscription(user_id=user_id, stock_symbol=subscription.stock_symbol.upper())
-    db.add(db_sub)
-    db.commit()
-    db.refresh(db_sub)
-    return db_sub
-
-@router.delete("/users/{user_id}/subscriptions/{symbol}")
-def remove_subscription_for_user(user_id: int, symbol: str, db: Session = Depends(get_db)):
-    """为指定用户删除股票订阅"""
-    sub = db.query(Subscription).filter_by(user_id=user_id, stock_symbol=symbol.upper()).first()
-    if not sub:
-        raise HTTPException(status_code=404, detail="未找到该订阅记录")
-
-    db.delete(sub)
-    db.commit()
-    return {"message": "成功删除订阅"}
-</file>
-
-<file path="app/db/database.py">
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.db.models import Base
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./stock_app.db")
-
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base.metadata.create_all(bind=engine)
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-</file>
-
-<file path="app/web/templates/base.html">
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Stock News Analyzer{% endblock %}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>
-        body {
-            background-color: #f8f9fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-        }
-        .navbar-brand {
-            font-weight: bold;
-            color: #2c3e50 !important;
-        }
-        .card {
-            border: none;
-            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
-            border-radius: 0.5rem;
-        }
-        .btn-primary {
-            background-color: #3498db;
-            border-color: #3498db;
-        }
-        .btn-primary:hover {
-            background-color: #2980b9;
-            border-color: #2980b9;
-        }
-        .stock-card {
-            transition: transform 0.2s;
-        }
-        .stock-card:hover {
-            transform: translateY(-2px);
-        }
-        .news-item {
-            border-left: 3px solid #3498db;
-            padding-left: 1rem;
-            margin-bottom: 1rem;
-        }
-        .loading {
-            display: none;
-        }
-    </style>
-    {% block extra_css %}{% endblock %}
-</head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm">
-        <div class="container">
-            <a class="navbar-brand" href="/">
-                <i class="fas fa-chart-line me-2"></i>Stock News Analyzer
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto">
-                    {% if user %}
-                        <li class="nav-item">
-                            <a class="nav-link" href="/dashboard">仪表盘</a>
-                        </li>
-                        <li class="nav-item">
-                            <form action="/logout" method="post" class="d-inline">
-                                <button type="submit" class="btn btn-link nav-link" style="border: none; background: none;">
-                                    退出登录
-                                </button>
-                            </form>
-                        </li>
-                    {% else %}
-                        <li class="nav-item">
-                            <a class="nav-link" href="/login">登录</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/register">注册</a>
-                        </li>
-                    {% endif %}
-                </ul>
-            </div>
-        </div>
-    </nav>
-
-    <main class="container my-4">
-        {% block content %}{% endblock %}
-    </main>
-
-    <footer class="bg-light text-center py-4 mt-5">
-        <div class="container">
-            <p class="text-muted mb-0">&copy; 2024 Stock News Analyzer. 投资有风险，入市需谨慎。</p>
-        </div>
-    </footer>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-    {% block extra_js %}{% endblock %}
-</body>
-</html>
-</file>
-
-<file path="app/web/templates/detailed_analysis.html">
-{% extends "base.html" %}
-
-{% block title %}{{ analysis.symbol }} 详细分析 - Stock News Analyzer{% endblock %}
-
-{% block extra_css %}
-<style>
-    .summary-card {
-        border: 1px solid #e9ecef;
-        border-left-width: 5px;
-        border-radius: 0.5rem;
-        padding: 1.25rem;
-        height: 100%;
-    }
-    .summary-card-title {
-        font-size: 0.9rem;
-        color: #6c757d;
-        margin-bottom: 0.25rem;
-        font-weight: 500;
-    }
-    .summary-card-value {
-        font-size: 1.75rem;
-        font-weight: bold;
-    }
-    /* 颜色编码 */
-    .summary-card.hold { border-left-color: #ffc107; }
-    .summary-card.hold .summary-card-value { color: #ffc107; }
-    .summary-card.buy { border-left-color: #198754; }
-    .summary-card.buy .summary-card-value { color: #198754; }
-    .summary-card.sell { border-left-color: #dc3545; }
-    .summary-card.sell .summary-card-value { color: #dc3545; }
-
-    .summary-card.positive { border-left-color: #198754; }
-    .summary-card.positive .summary-card-value { color: #198754; }
-    .summary-card.negative { border-left-color: #dc3545; }
-    .summary-card.negative .summary-card-value { color: #dc3545; }
-    .summary-card.neutral { border-left-color: #6c757d; }
-    .summary-card.neutral .summary-card-value { color: #6c757d; }
-
-    .summary-card.medium { border-left-color: #fd7e14; }
-    .summary-card.medium .summary-card-value { color: #fd7e14; }
-    .summary-card.low { border-left-color: #198754; }
-    .summary-card.low .summary-card-value { color: #198754; }
-    .summary-card.high { border-left-color: #dc3545; }
-    .summary-card.high .summary-card-value { color: #dc3545; }
-
-    .key-points-list {
-        list-style: none;
-        padding-left: 0;
-    }
-    .key-points-list li {
-        margin-bottom: 0.75rem;
-        display: flex;
-        align-items: flex-start;
-    }
-    .key-points-list li .fa-check-circle {
-        color: #3498db;
-        margin-right: 10px;
-        margin-top: 5px;
-    }
-    .data-card {
-        background-color: #f8f9fa;
-        border-radius: 0.5rem;
-    }
-    .data-card ul li {
-        display: flex;
-        justify-content: space-between;
-        padding: 0.5rem 0;
-        border-bottom: 1px solid #e9ecef;
-    }
-    .data-card ul li:last-child {
-        border-bottom: none;
-    }
-    .news-item {
-        border-left: 3px solid #3498db;
-        padding-left: 1rem;
-        margin-bottom: 1rem;
-    }
-    .back-button {
-        margin-bottom: 1.5rem;
-    }
-    .analysis-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 2rem;
-        border-radius: 0.5rem;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background: white;
-        border-radius: 0.5rem;
-        padding: 1.5rem;
-        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
-        margin-bottom: 1.5rem;
-    }
-</style>
-{% endblock %}
-
-{% block content %}
-<div class="back-button">
-    <a href="/dashboard" class="btn btn-outline-secondary">
-        <i class="fas fa-arrow-left me-2"></i>返回仪表盘
-    </a>
-</div>
-
-<div class="analysis-header">
-    <div class="row align-items-center">
-        <div class="col-md-8">
-            <h1 class="display-5 fw-bold">{{ analysis.symbol }}</h1>
-            <p class="lead mb-0">详细分析报告</p>
-            <p class="mb-0">分析日期: {{ analysis.analysis_date }}</p>
-        </div>
-        <div class="col-md-4 text-md-end">
-            <div class="d-flex justify-content-md-end gap-3">
-                <div class="text-center">
-                    <div class="fs-6">股票代码</div>
-                    <div class="fs-3 fw-bold">{{ analysis.symbol }}</div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row mb-4">
-    <div class="col-md-4">
-        <div class="summary-card {% if analysis.analysis_result.recommendation %}{% if analysis.analysis_result.recommendation|lower == 'buy' %}buy{% elif analysis.analysis_result.recommendation|lower == 'sell' %}sell{% else %}hold{% endif %}{% else %}hold{% endif %}">
-            <div class="summary-card-title">投资建议</div>
-            <div class="summary-card-value">{{ analysis.analysis_result.recommendation|default('N/A')|upper }}</div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="summary-card {% if analysis.analysis_result.overall_sentiment %}{% if analysis.analysis_result.overall_sentiment|lower == 'positive' %}positive{% elif analysis.analysis_result.overall_sentiment|lower == 'negative' %}negative{% else %}neutral{% endif %}{% else %}neutral{% endif %}">
-            <div class="summary-card-title">总体评价</div>
-            <div class="summary-card-value">{{ analysis.analysis_result.overall_sentiment|default('N/A') }}</div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="summary-card {% if analysis.analysis_result.risk_level %}{% if analysis.analysis_result.risk_level|lower == 'low' %}low{% elif analysis.analysis_result.risk_level|lower == 'high' %}high{% else %}medium{% endif %}{% else %}medium{% endif %}">
-            <div class="summary-card-title">风险水平</div>
-            <div class="summary-card-value">{{ analysis.analysis_result.risk_level|default('N/A')|upper }}</div>
-        </div>
-    </div>
-</div>
-
-<div class="row">
-    <div class="col-lg-8">
-        <!-- 分析摘要 -->
-        <div class="metric-card">
-            <h4><i class="fas fa-file-alt me-2"></i>分析摘要</h4>
-            <p class="mb-0">{{ analysis.analysis_result.summary|default('暂无分析摘要') }}</p>
-        </div>
-
-        <!-- 关键点 -->
-        {% if analysis.analysis_result.key_points and analysis.analysis_result.key_points|length > 0 %}
-        <div class="metric-card">
-            <h4><i class="fas fa-key me-2"></i>关键点</h4>
-            <ul class="key-points-list">
-                {% for point in analysis.analysis_result.key_points %}
-                <li><i class="fas fa-check-circle"></i><span>{{ point }}</span></li>
-                {% endfor %}
-            </ul>
-        </div>
-        {% endif %}
-
-        <!-- 技术分析 -->
-        {% if analysis.analysis_result.technical_analysis %}
-        <div class="metric-card">
-            <h4><i class="fas fa-chart-line me-2"></i>技术分析</h4>
-            <p class="mb-0">{{ analysis.analysis_result.technical_analysis }}</p>
-        </div>
-        {% endif %}
-
-        <!-- 分析理由 -->
-        {% if analysis.analysis_result.reasoning %}
-        <div class="metric-card">
-            <h4><i class="fas fa-lightbulb me-2"></i>分析理由</h4>
-            <p class="mb-0">{{ analysis.analysis_result.reasoning }}</p>
-        </div>
-        {% endif %}
-    </div>
-
-    <div class="col-lg-4">
-        <!-- 最新价格数据 -->
-        <div class="metric-card">
-            <h4><i class="fas fa-chart-bar me-2"></i>最新日K数据</h4>
-            <div class="data-card">
-                <ul>
-                    <li><span>开盘价</span><strong>{{ analysis.latest_price_data.open|default('N/A') }}</strong></li>
-                    <li><span>最高价</span><strong>{{ analysis.latest_price_data.high|default('N/A') }}</strong></li>
-                    <li><span>最低价</span><strong>{{ analysis.latest_price_data.low|default('N/A') }}</strong></li>
-                    <li><span>收盘价</span><strong>{{ analysis.latest_price_data.close|default('N/A') }}</strong></li>
-                    <li><span>交易量</span><strong>{{ analysis.latest_price_data.volume|default('N/A') }}</strong></li>
-                </ul>
-            </div>
-        </div>
-
-        <!-- 相关新闻 -->
-        {% if analysis.news_data and analysis.news_data|length > 0 %}
-        <div class="metric-card">
-            <h4><i class="fas fa-newspaper me-2"></i>相关新闻</h4>
-            <div class="list-group list-group-flush">
-                {% for news in analysis.news_data %}
-                <a href="{{ news.url|default('#') }}" target="_blank" class="list-group-item list-group-item-action">
-                    <div class="d-flex w-100 justify-content-between">
-                        <h6 class="mb-1">{{ news.title|default('无标题') }}</h6>
-                    </div>
-                    {% if news.published_at %}
-                    <small class="text-muted">{{ news.published_at }}</small>
-                    {% endif %}
-                </a>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-    </div>
-</div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-function get_recommendation_class(recommendation) {
-    if (!recommendation) return 'hold';
-    const rec = recommendation.toLowerCase();
-    if (rec === 'buy') return 'buy';
-    if (rec === 'sell') return 'sell';
-    return 'hold';
-}
-
-function get_sentiment_class(sentiment) {
-    if (!sentiment) return 'neutral';
-    const sent = sentiment.toLowerCase();
-    if (sent === 'positive') return 'positive';
-    if (sent === 'negative') return 'negative';
-    return 'neutral';
-}
-
-function get_risk_class(risk) {
-    if (!risk) return 'medium';
-    const r = risk.toLowerCase();
-    if (r === 'low') return 'low';
-    if (r === 'high') return 'high';
-    return 'medium';
-}
-</script>
-{% endblock %}
-</file>
-
-<file path="app/web/templates/home.html">
-{% extends "base.html" %}
-
-{% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-8">
-        <div class="text-center py-5">
-            <h1 class="display-4 fw-bold text-primary mb-4">
-                <i class="fas fa-chart-line"></i> Stock News Analyzer
-            </h1>
-            <p class="lead text-muted mb-5">
-                AI驱动的股票新闻分析平台，为您提供实时的股票新闻分析和投资建议
-            </p>
-            
-            <div class="row g-4 mb-5">
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <i class="fas fa-newspaper fa-3x text-primary mb-3"></i>
-                            <h5 class="card-title">实时新闻</h5>
-                            <p class="card-text">获取最新的股票相关新闻和资讯</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <i class="fas fa-brain fa-3x text-primary mb-3"></i>
-                            <h5 class="card-title">AI分析</h5>
-                            <p class="card-text">基于AI的智能分析和投资建议</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <i class="fas fa-envelope fa-3x text-primary mb-3"></i>
-                            <h5 class="card-title">邮件推送</h5>
-                            <p class="card-text">每日定时推送分析报告到您的邮箱</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="d-grid gap-2 d-md-flex justify-content-center">
-                <a href="/register" class="btn btn-primary btn-lg px-4 me-md-2">
-                    <i class="fas fa-user-plus me-2"></i>立即注册
-                </a>
-                <a href="/login" class="btn btn-outline-primary btn-lg px-4">
-                    <i class="fas fa-sign-in-alt me-2"></i>登录
-                </a>
-            </div>
-        </div>
-    </div>
-</div>
-{% endblock %}
-</file>
-
-<file path="app/web/templates/login.html">
-{% extends "base.html" %}
-
-{% block title %}登录 - Stock News Analyzer{% endblock %}
-
-{% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6 col-lg-4">
-        <div class="card">
-            <div class="card-body">
-                <h2 class="card-title text-center mb-4">用户登录</h2>
-                
-                {% if error %}
-                <div class="alert alert-danger" role="alert">
-                    {{ error }}
-                </div>
-                {% endif %}
-                
-                <form method="post" action="/login" id="loginForm">
-                    <div class="mb-3">
-                        <label for="username" class="form-label">用户名</label>
-                        <input type="text" class="form-control" id="username" name="username" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="password" class="form-label">密码</label>
-                        <input type="password" class="form-control" id="password" name="password" required>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary w-100" id="loginBtn">
-                        <span id="loginText">登录</span>
-                        <span id="loadingSpinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
-                    </button>
-                </form>
-                
-                <div class="text-center mt-3">
-                    <p>还没有账户？ <a href="/register">立即注册</a></p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-document.getElementById('loginForm').addEventListener('submit', function(e) {
-    const loginBtn = document.getElementById('loginBtn');
-    const loginText = document.getElementById('loginText');
-    const loadingSpinner = document.getElementById('loadingSpinner');
-    
-    // 禁用按钮并显示加载状态
-    loginBtn.disabled = true;
-    loginText.classList.add('d-none');
-    loadingSpinner.classList.remove('d-none');
-    
-    // 表单会继续正常提交
-});
-</script>
-
-<style>
-.spinner-border-sm {
-    width: 1rem;
-    height: 1rem;
-}
-</style>
-{% endblock %}
-</file>
-
-<file path="app/web/templates/register.html">
-{% extends "base.html" %}
-
-{% block title %}注册 - Stock News Analyzer{% endblock %}
-
-{% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6 col-lg-4">
-        <div class="card">
-            <div class="card-body">
-                <h2 class="card-title text-center mb-4">注册新账户</h2>
-                
-                {% if error %}
-                <div class="alert alert-danger" role="alert">
-                    {{ error }}
-                </div>
-                {% endif %}
-                
-                <form method="post">
-                    <div class="mb-3">
-                        <label for="username" class="form-label">用户名</label>
-                        <input type="text" class="form-control" id="username" name="username" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="email" class="form-label">邮箱地址</label>
-                        <input type="email" class="form-control" id="email" name="email" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="password" class="form-label">密码</label>
-                        <input type="password" class="form-control" id="password" name="password" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="stocks" class="form-label">订阅股票代码</label>
-                        <input type="text" class="form-control" id="stocks" name="stocks" 
-                               placeholder="例如: AAPL,GOOGL,MSFT" required>
-                        <div class="form-text">多个股票代码用逗号分隔</div>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary w-100">注册</button>
-                </form>
-                
-                <div class="text-center mt-3">
-                    <p>已有账户？ <a href="/login">立即登录</a></p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-{% endblock %}
-</file>
-
-<file path="app/__init__.py">
-# 这是一个空文件，用于将app目录标记为Python包
-# FastAPI应用的主要配置在run.py中
-</file>
-
 <file path="scripts/create_test_user.py">
 import requests
 
@@ -6365,6 +6237,73 @@ class AlphaVantageAPI:
         except Exception as e:
             print(f"Error fetching prices for {symbol}: {e}")
             return None
+</file>
+
+<file path="services/symbol_service.py">
+class StockSymbolService:
+    def __init__(self):
+        """Initialize the service by loading stock data from data/stock.txt"""
+        self.stocks = []
+        self._load_stock_data()
+    
+    def _load_stock_data(self):
+        """Load stock data from file and parse into list of dictionaries"""
+        import os
+        
+        # Get absolute path to data/stock.txt
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        file_path = os.path.join(base_dir, 'data', 'stock.txt')
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                # Skip the header line
+                next(file)
+                
+                for line in file:
+                    line = line.strip()
+                    if line:
+                        parts = line.split('|')
+                        if len(parts) >= 2:
+                            symbol = parts[0].strip()
+                            name = parts[1].strip()
+                            self.stocks.append({
+                                'symbol': symbol,
+                                'name': name
+                            })
+        except FileNotFoundError:
+            print(f"Warning: {file_path} file not found")
+        except Exception as e:
+            print(f"Error loading stock data: {e}")
+    
+    def search(self, keyword):
+        """
+        Search for stocks where symbol or name contains the keyword (case-insensitive)
+        
+        Args:
+            keyword (str): The search keyword
+            
+        Returns:
+            list: List of matching stock dictionaries (max 10 results)
+        """
+        if not keyword:
+            return []
+        
+        keyword_lower = keyword.lower()
+        results = []
+        
+        for stock in self.stocks:
+            if (keyword_lower in stock['symbol'].lower() or 
+                keyword_lower in stock['name'].lower()):
+                results.append(stock)
+                
+                # Limit to 10 results
+                if len(results) >= 10:
+                    break
+        
+        return results
+
+# Create singleton instance
+stock_symbol_service = StockSymbolService()
 </file>
 
 <file path="tests/integration/test_auth_flow.py">
@@ -6956,246 +6895,6 @@ class TestAIAnalyzer:
         custom_analyzer = AIAnalyzer(model_name="custom-model-7b")
         assert custom_analyzer.model_name == "custom-model-7b"
         assert custom_analyzer.ollama_url == "http://localhost:11434/api/generate"
-</file>
-
-<file path="tests/unit/test_alpha_vantage_api.py">
-"""Alpha Vantage API 单元测试"""
-import pytest
-import responses
-from services.alpha_vantage_api import AlphaVantageAPI
-
-class TestAlphaVantageAPI:
-    
-    def setup_method(self):
-        """每个测试方法前的设置"""
-        self.api = AlphaVantageAPI()
-        self.api.api_key = "test_api_key"
-    
-    @responses.activate
-    def test_get_stock_news_success(self):
-        """测试成功获取股票新闻"""
-        symbol = "AAPL"
-        mock_response = {
-            "feed": [
-                {
-                    "title": "Apple Stock Rises on Strong Earnings",
-                    "summary": "Apple reported better-than-expected earnings...",
-                    "url": "https://example.com/news1",
-                    "time_published": "20240101T120000",
-                    "source": "Reuters",
-                    "overall_sentiment_score": 0.8
-                },
-                {
-                    "title": "iPhone Sales Beat Expectations",
-                    "summary": "iPhone sales exceeded analyst predictions...",
-                    "url": "https://example.com/news2",
-                    "time_published": "20240101T110000",
-                    "source": "Bloomberg",
-                    "overall_sentiment_score": 0.6
-                }
-            ]
-        }
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json=mock_response,
-            status=200
-        )
-        
-        result = self.api.get_stock_news(symbol)
-        
-        assert result is not None
-        assert result["symbol"] == "AAPL"
-        assert len(result["news"]) == 2
-        assert result["news"][0]["title"] == "Apple Stock Rises on Strong Earnings"
-        assert result["news"][0]["sentiment"] == 0.8
-    
-    @responses.activate
-    def test_get_stock_news_no_data(self):
-        """测试无新闻数据的情况"""
-        symbol = "INVALID"
-        mock_response = {}
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json=mock_response,
-            status=200
-        )
-        
-        result = self.api.get_stock_news(symbol)
-        assert result is None
-    
-    @responses.activate
-    def test_get_stock_news_api_error(self):
-        """测试API错误处理"""
-        symbol = "AAPL"
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json={"error": "API limit reached"},
-            status=429
-        )
-        
-        result = self.api.get_stock_news(symbol)
-        assert result is None
-    
-    @responses.activate
-    def test_get_daily_prices_success(self):
-        """测试成功获取日K数据"""
-        symbol = "AAPL"
-        mock_response = {
-            "Time Series (Daily)": {
-                "2024-01-01": {
-                    "1. open": "150.00",
-                    "2. high": "155.00",
-                    "3. low": "149.50",
-                    "4. close": "154.00",
-                    "5. volume": "1000000"
-                },
-                "2023-12-29": {
-                    "1. open": "148.00",
-                    "2. high": "152.00",
-                    "3. low": "147.00",
-                    "4. close": "149.00",
-                    "5. volume": "800000"
-                }
-            }
-        }
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json=mock_response,
-            status=200
-        )
-        
-        result = self.api.get_daily_prices(symbol)
-        
-        assert result is not None
-        assert result["symbol"] == "AAPL"
-        assert result["date"] == "2024-01-01"
-        assert result["open"] == 150.00
-        assert result["close"] == 154.00
-        assert result["volume"] == 1000000
-    
-    @responses.activate
-    def test_get_daily_prices_no_data(self):
-        """测试无价格数据的情况"""
-        symbol = "INVALID"
-        mock_response = {"Error Message": "Invalid API call"}
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json=mock_response,
-            status=200
-        )
-        
-        result = self.api.get_daily_prices(symbol)
-        assert result is None
-    
-    def test_init_without_api_key(self, monkeypatch):
-        """测试缺少API Key的情况"""
-        monkeypatch.delenv("ALPHA_VANTAGE_API_KEY", raising=False)
-        with pytest.raises(ValueError, match="ALPHA_VANTAGE_API_KEY not found"):
-            AlphaVantageAPI()
-
-    @responses.activate
-    def test_search_symbols_success(self):
-        """测试成功搜索股票符号"""
-        keywords = "Apple"
-        mock_response = {
-            "bestMatches": [
-                {
-                    "1. symbol": "AAPL",
-                    "2. name": "Apple Inc.",
-                    "3. type": "Equity",
-                    "4. region": "United States",
-                    "5. marketOpen": "09:30",
-                    "6. marketClose": "16:00",
-                    "7. timezone": "UTC-05",
-                    "8. currency": "USD",
-                    "9. matchScore": "1.0000"
-                },
-                {
-                    "1. symbol": "APLE",
-                    "2. name": "Apple Hospitality REIT Inc.",
-                    "3. type": "Equity",
-                    "4. region": "United States",
-                    "5. marketOpen": "09:30",
-                    "6. marketClose": "16:00",
-                    "7. timezone": "UTC-05",
-                    "8. currency": "USD",
-                    "9. matchScore": "0.8000"
-                }
-            ]
-        }
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json=mock_response,
-            status=200
-        )
-        
-        result = self.api.search_symbols(keywords)
-        
-        assert result is not None
-        assert len(result) == 2
-        assert result[0]["symbol"] == "AAPL"
-        assert result[0]["name"] == "Apple Inc."
-        assert result[1]["symbol"] == "APLE"
-        assert result[1]["name"] == "Apple Hospitality REIT Inc."
-
-    @responses.activate
-    def test_search_symbols_no_matches(self):
-        """测试搜索无匹配结果的情况"""
-        keywords = "InvalidCompany"
-        mock_response = {"bestMatches": []}
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json=mock_response,
-            status=200
-        )
-        
-        result = self.api.search_symbols(keywords)
-        assert result == []
-
-    @responses.activate
-    def test_search_symbols_no_best_matches_field(self):
-        """测试响应中没有bestMatches字段的情况"""
-        keywords = "Test"
-        mock_response = {"Error Message": "Invalid API call"}
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json=mock_response,
-            status=200
-        )
-        
-        result = self.api.search_symbols(keywords)
-        assert result == []
-
-    @responses.activate
-    def test_search_symbols_api_error(self):
-        """测试API错误处理"""
-        keywords = "Apple"
-        
-        responses.add(
-            responses.GET,
-            "https://www.alphavantage.co/query",
-            json={"error": "API limit reached"},
-            status=429
-        )
-        
-        result = self.api.search_symbols(keywords)
-        assert result == []
 </file>
 
 <file path="tests/unit/test_edge_cases.py">
@@ -10267,6 +9966,85 @@ if __name__ == "__main__":
     main()
 </file>
 
+<file path="app/api/admin_router.py">
+# app/api/admin_router.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+
+from app.db.database import get_db
+from app.db.models import User, Subscription
+from app.schemas import UserResponse, SubscriptionResponse, SubscriptionCreate
+from app.core.security import get_current_admin_user
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["Admin"],
+    dependencies=[Depends(get_current_admin_user)] # 关键：此路由下的所有端点都需要管理员权限
+)
+
+@router.get("/users", response_model=List[UserResponse])
+def list_users(db: Session = Depends(get_db)):
+    """获取所有用户列表"""
+    return db.query(User).all()
+
+@router.get("/users/{user_id}/subscriptions", response_model=List[SubscriptionResponse])
+def get_user_subscriptions(user_id: int, db: Session = Depends(get_db)):
+    """查看指定用户的股票订阅"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="未找到用户")
+    return user.subscriptions
+
+@router.post("/users/{user_id}/subscriptions", response_model=SubscriptionResponse)
+def add_subscription_for_user(user_id: int, subscription: SubscriptionCreate, db: Session = Depends(get_db)):
+    """为指定用户添加股票订阅"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="未找到用户")
+
+    # 检查是否已订阅
+    existing = db.query(Subscription).filter_by(user_id=user_id, stock_symbol=subscription.stock_symbol.upper()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该用户已订阅此股票")
+
+    db_sub = Subscription(user_id=user_id, stock_symbol=subscription.stock_symbol.upper())
+    db.add(db_sub)
+    db.commit()
+    db.refresh(db_sub)
+    return db_sub
+
+@router.delete("/users/{user_id}/subscriptions/{symbol}")
+def remove_subscription_for_user(user_id: int, symbol: str, db: Session = Depends(get_db)):
+    """为指定用户删除股票订阅"""
+    sub = db.query(Subscription).filter_by(user_id=user_id, stock_symbol=symbol.upper()).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="未找到该订阅记录")
+
+    db.delete(sub)
+    db.commit()
+    return {"message": "成功删除订阅"}
+
+@router.post("/users/{user_id}/upgrade", response_model=UserResponse)
+def upgrade_user_tier(user_id: int, db: Session = Depends(get_db)):
+    """升级用户等级到 premium"""
+    from datetime import datetime, timedelta
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="未找到用户")
+    
+    # 升级用户等级
+    user.tier = 'premium'
+    # 设置订阅到期时间为一年后
+    user.subscription_expires_at = datetime.utcnow() + timedelta(days=365)
+    
+    db.commit()
+    db.refresh(user)
+    return user
+</file>
+
 <file path="app/core/security.py">
 from datetime import datetime, timedelta
 from typing import Optional
@@ -10564,69 +10342,244 @@ class StockForm(FlaskForm):
     submit = SubmitField('添加')
 </file>
 
-<file path="app/schemas.py">
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
-from datetime import datetime
+<file path="tests/unit/test_alpha_vantage_api.py">
+"""Alpha Vantage API 单元测试"""
+import pytest
+import responses
+from services.alpha_vantage_api import AlphaVantageAPI
 
-
-class UserBase(BaseModel):
-    username: str
-    email: EmailStr
-
-
-class UserCreate(UserBase):
-    password: str
-
-
-class UserUpdateEmail(BaseModel):
-    email: EmailStr
-
-
-class UserResponse(UserBase):
-    id: int
-    is_active: bool
-    created_at: datetime
+class TestAlphaVantageAPI:
     
-    class Config:
-        from_attributes = True
-
-
-class SubscriptionBase(BaseModel):
-    stock_symbol: str
-
-
-class SubscriptionCreate(SubscriptionBase):
-    pass
-
-
-class SubscriptionResponse(SubscriptionBase):
-    id: int
-    user_id: int
-    created_at: datetime
+    def setup_method(self):
+        """每个测试方法前的设置"""
+        self.api = AlphaVantageAPI()
+        self.api.api_key = "test_api_key"
     
-    class Config:
-        from_attributes = True
-
-
-class StockAnalysisResponse(BaseModel):
-    stock_symbol: str
-    news_data: Optional[str]
-    analysis_result: Optional[str]
-    recommendation: Optional[str]
-    created_at: datetime
+    @responses.activate
+    def test_get_stock_news_success(self):
+        """测试成功获取股票新闻"""
+        symbol = "AAPL"
+        mock_response = {
+            "feed": [
+                {
+                    "title": "Apple Stock Rises on Strong Earnings",
+                    "summary": "Apple reported better-than-expected earnings...",
+                    "url": "https://example.com/news1",
+                    "time_published": "20240101T120000",
+                    "source": "Reuters",
+                    "overall_sentiment_score": 0.8
+                },
+                {
+                    "title": "iPhone Sales Beat Expectations",
+                    "summary": "iPhone sales exceeded analyst predictions...",
+                    "url": "https://example.com/news2",
+                    "time_published": "20240101T110000",
+                    "source": "Bloomberg",
+                    "overall_sentiment_score": 0.6
+                }
+            ]
+        }
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.get_stock_news(symbol)
+        
+        assert result is not None
+        assert result["symbol"] == "AAPL"
+        assert len(result["news"]) == 2
+        assert result["news"][0]["title"] == "Apple Stock Rises on Strong Earnings"
+        assert result["news"][0]["sentiment"] == 0.8
     
-    class Config:
-        from_attributes = True
+    @responses.activate
+    def test_get_stock_news_no_data(self):
+        """测试无新闻数据的情况"""
+        symbol = "INVALID"
+        mock_response = {}
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.get_stock_news(symbol)
+        assert result is None
+    
+    @responses.activate
+    def test_get_stock_news_api_error(self):
+        """测试API错误处理"""
+        symbol = "AAPL"
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json={"error": "API limit reached"},
+            status=429
+        )
+        
+        result = self.api.get_stock_news(symbol)
+        assert result is None
+    
+    @responses.activate
+    def test_get_daily_prices_success(self):
+        """测试成功获取日K数据"""
+        symbol = "AAPL"
+        mock_response = {
+            "Time Series (Daily)": {
+                "2024-01-01": {
+                    "1. open": "150.00",
+                    "2. high": "155.00",
+                    "3. low": "149.50",
+                    "4. close": "154.00",
+                    "5. volume": "1000000"
+                },
+                "2023-12-29": {
+                    "1. open": "148.00",
+                    "2. high": "152.00",
+                    "3. low": "147.00",
+                    "4. close": "149.00",
+                    "5. volume": "800000"
+                }
+            }
+        }
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.get_daily_prices(symbol)
+        
+        assert result is not None
+        assert result["symbol"] == "AAPL"
+        assert result["date"] == "2024-01-01"
+        assert result["open"] == 150.00
+        assert result["close"] == 154.00
+        assert result["volume"] == 1000000
+    
+    @responses.activate
+    def test_get_daily_prices_no_data(self):
+        """测试无价格数据的情况"""
+        symbol = "INVALID"
+        mock_response = {"Error Message": "Invalid API call"}
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.get_daily_prices(symbol)
+        assert result is None
+    
+    def test_init_without_api_key(self, monkeypatch):
+        """测试缺少API Key的情况"""
+        monkeypatch.delenv("ALPHA_VANTAGE_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="ALPHA_VANTAGE_API_KEY not found"):
+            AlphaVantageAPI()
 
+    @responses.activate
+    def test_search_symbols_success(self):
+        """测试成功搜索股票符号"""
+        keywords = "Apple"
+        mock_response = {
+            "bestMatches": [
+                {
+                    "1. symbol": "AAPL",
+                    "2. name": "Apple Inc.",
+                    "3. type": "Equity",
+                    "4. region": "United States",
+                    "5. marketOpen": "09:30",
+                    "6. marketClose": "16:00",
+                    "7. timezone": "UTC-05",
+                    "8. currency": "USD",
+                    "9. matchScore": "1.0000"
+                },
+                {
+                    "1. symbol": "APLE",
+                    "2. name": "Apple Hospitality REIT Inc.",
+                    "3. type": "Equity",
+                    "4. region": "United States",
+                    "5. marketOpen": "09:30",
+                    "6. marketClose": "16:00",
+                    "7. timezone": "UTC-05",
+                    "8. currency": "USD",
+                    "9. matchScore": "0.8000"
+                }
+            ]
+        }
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.search_symbols(keywords)
+        
+        assert result is not None
+        assert len(result) == 2
+        assert result[0]["symbol"] == "AAPL"
+        assert result[0]["name"] == "Apple Inc."
+        assert result[1]["symbol"] == "APLE"
+        assert result[1]["name"] == "Apple Hospitality REIT Inc."
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+    @responses.activate
+    def test_search_symbols_no_matches(self):
+        """测试搜索无匹配结果的情况"""
+        keywords = "InvalidCompany"
+        mock_response = {"bestMatches": []}
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.search_symbols(keywords)
+        assert result == []
 
+    @responses.activate
+    def test_search_symbols_no_best_matches_field(self):
+        """测试响应中没有bestMatches字段的情况"""
+        keywords = "Test"
+        mock_response = {"Error Message": "Invalid API call"}
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json=mock_response,
+            status=200
+        )
+        
+        result = self.api.search_symbols(keywords)
+        assert result == []
 
-class TokenData(BaseModel):
-    username: Optional[str] = None
+    @responses.activate
+    def test_search_symbols_api_error(self):
+        """测试API错误处理"""
+        keywords = "Apple"
+        
+        responses.add(
+            responses.GET,
+            "https://www.alphavantage.co/query",
+            json={"error": "API limit reached"},
+            status=429
+        )
+        
+        result = self.api.search_symbols(keywords)
+        assert result == []
 </file>
 
 <file path=".env.example">
@@ -10869,327 +10822,6 @@ stockAPI/
 ## 许可证
 
 MIT License - 详见 [LICENSE](LICENSE) 文件
-</file>
-
-<file path="app/api/main_api_router.py">
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
-from datetime import timedelta, datetime
-from app.db.database import get_db
-from app.db.models import User, Subscription, StockAnalysis
-from app.schemas import UserCreate, UserResponse, UserUpdateEmail, SubscriptionCreate, SubscriptionResponse, StockAnalysisResponse, Token
-from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash, get_current_user_from_cookie_or_header
-from services.alpha_vantage_api import AlphaVantageAPI
-from services.ai_analyzer import AIAnalyzer
-from services.email_service import EmailService
-from services.symbol_service import stock_symbol_service
-from typing import List
-
-router = APIRouter()
-
-# 初始化服务
-alpha_api = AlphaVantageAPI()
-ai_analyzer = AIAnalyzer()
-email_service = EmailService()
-
-@router.post("/register", response_model=UserResponse)
-def register(user: UserCreate, db: Session = Depends(get_db)):
-    """用户注册"""
-    # 检查用户名是否已存在
-    if db.query(User).filter(User.username == user.username).first():
-        raise HTTPException(
-            status_code=400,
-            detail="Username already registered"
-        )
-    
-    # 检查邮箱是否已存在
-    if db.query(User).filter(User.email == user.email).first():
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
-        )
-    
-    # 创建新用户
-    db_user = User(
-        username=user.username,
-        email=user.email,
-        password_hash=get_password_hash(user.password)
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
-
-@router.post("/token", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """用户登录"""
-    user = authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token_expires = timedelta(minutes=30)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@router.get("/users/me", response_model=UserResponse)
-def read_users_me(current_user: User = Depends(get_current_user)):
-    """获取当前用户信息"""
-    return current_user
-
-
-@router.put("/users/me/email", response_model=UserResponse)
-def update_user_email(
-    email_update: UserUpdateEmail,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """更新用户邮箱"""
-    # 检查邮箱是否已被其他用户使用
-    existing_user = db.query(User).filter(
-        User.email == email_update.email,
-        User.id != current_user.id
-    ).first()
-    
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered by another user"
-        )
-    
-    # 更新邮箱
-    current_user.email = email_update.email
-    db.commit()
-    db.refresh(current_user)
-    
-    return current_user
-
-@router.post("/subscribe", response_model=SubscriptionResponse)
-def subscribe_stock(
-    request: Request,
-    subscription: SubscriptionCreate,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """订阅股票"""
-    # 检查是否已订阅
-    existing = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id,
-        Subscription.stock_symbol == subscription.stock_symbol.upper()
-    ).first()
-    
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="Stock already subscribed"
-        )
-    
-    # 创建订阅
-    db_subscription = Subscription(
-        user_id=current_user.id,
-        stock_symbol=subscription.stock_symbol.upper()
-    )
-    db.add(db_subscription)
-    db.commit()
-    db.refresh(db_subscription)
-    return db_subscription
-
-@router.delete("/unsubscribe/{symbol}")
-def unsubscribe_stock(
-    symbol: str,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """取消订阅股票"""
-    subscription = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id,
-        Subscription.stock_symbol == symbol.upper()
-    ).first()
-    
-    if not subscription:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found"
-        )
-    
-    db.delete(subscription)
-    db.commit()
-    return {"message": "Unsubscribed successfully"}
-
-@router.get("/subscriptions", response_model=List[SubscriptionResponse])
-def get_subscriptions(
-    request: Request,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """获取用户订阅的股票"""
-    subscriptions = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id
-    ).all()
-    return subscriptions
-
-@router.get("/analyze/{symbol}")
-def analyze_stock(
-    request: Request,
-    symbol: str,
-    current_user: User = Depends(get_current_user_from_cookie_or_header),
-    db: Session = Depends(get_db)
-):
-    """获取股票分析报告"""
-    symbol = symbol.upper()
-    
-    # 查询数据库获取最新的分析报告
-    latest_analysis = db.query(StockAnalysis).filter(
-        StockAnalysis.stock_symbol == symbol
-    ).order_by(
-        StockAnalysis.analysis_date.desc()
-    ).first()
-    
-    # 如果找不到记录，返回404错误
-    if not latest_analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"股票 {symbol} 的分析报告尚未生成，请稍后再试。"
-        )
-    
-    # 格式化响应数据
-    try:
-        news_data = latest_analysis.news_data or {}
-        return {
-            "symbol": latest_analysis.stock_symbol,
-            "analysis_date": latest_analysis.analysis_date.isoformat(),
-            "news": news_data.get("news", []) if isinstance(news_data, dict) else [],
-            "analysis": latest_analysis.analysis_result if latest_analysis.analysis_result is not None else {},
-            "latest_data": latest_analysis.latest_price_data if latest_analysis.latest_price_data is not None else {}
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"处理分析报告时发生内部错误: {str(e)}"
-        )
-
-@router.post("/send-report")
-def send_daily_report(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """发送每日报告"""
-    # 获取用户订阅的股票
-    subscriptions = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id
-    ).all()
-    
-    if not subscriptions:
-        raise HTTPException(
-            status_code=404,
-            detail="No subscriptions found"
-        )
-    
-    analyses = []
-    for subscription in subscriptions:
-        symbol = subscription.stock_symbol
-        
-        # 获取股票数据
-        news_data = alpha_api.get_stock_news(symbol)
-        price_data = alpha_api.get_daily_prices(symbol)
-        
-        if news_data:
-            # AI分析
-            analysis = ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
-            analyses.append(analysis)
-    
-    if analyses:
-        # 发送邮件
-        success = email_service.send_analysis_report(current_user.email, analyses)
-        if success:
-            return {"message": "Report sent successfully"}
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to send report"
-            )
-    
-    return {"message": "No data to analyze"}
-
-@router.post("/toggle-notifications")
-def toggle_email_notifications(
-    enabled: bool,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """切换邮件通知设置"""
-    current_user.email_notifications = enabled
-    db.commit()
-    return {"message": "Email notifications updated", "enabled": enabled}
-
-@router.get("/search-symbols")
-def search_symbols(
-    keyword: str,
-    current_user: User = Depends(get_current_user_from_cookie_or_header)
-):
-    """搜索股票符号"""
-    try:
-        results = stock_symbol_service.search(keyword)
-        return results
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"搜索股票符号时发生错误: {str(e)}"
-        )
-</file>
-
-<file path="app/db/models.py">
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Date, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-from datetime import datetime, date
-
-Base = declarative_base()
-
-class User(Base):
-    __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, nullable=False)
-    email = Column(String(100), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
-    email_notifications = Column(Boolean, default=True)
-    is_superuser = Column(Boolean, default=False, nullable=False) 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
-    
-    def get_subscribed_stocks_list(self):
-        """获取用户订阅的股票代码列表"""
-        return [sub.stock_symbol for sub in self.subscriptions]
-
-class Subscription(Base):
-    __tablename__ = "subscriptions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    stock_symbol = Column(String(10), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    user = relationship("User", back_populates="subscriptions")
-
-class StockAnalysis(Base):
-    __tablename__ = "stock_analyses"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    stock_symbol = Column(String(10), nullable=False, index=True)
-    analysis_date = Column(Date, nullable=False, default=date.today)
-    analysis_result = Column(JSON)
-    latest_price_data = Column(JSON)
-    news_data = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
 </file>
 
 <file path="app/web/routes.py">
@@ -11601,6 +11233,73 @@ class DailyReportScheduler:
 
 # 全局调度器实例
 scheduler = DailyReportScheduler()
+</file>
+
+<file path="app/schemas.py">
+from pydantic import BaseModel, EmailStr
+from typing import Optional, List
+from datetime import datetime
+
+
+class UserBase(BaseModel):
+    username: str
+    email: EmailStr
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserUpdateEmail(BaseModel):
+    email: EmailStr
+
+
+class UserResponse(UserBase):
+    id: int
+    is_active: bool
+    tier: str
+    subscription_expires_at: Optional[datetime] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class SubscriptionBase(BaseModel):
+    stock_symbol: str
+
+
+class SubscriptionCreate(SubscriptionBase):
+    pass
+
+
+class SubscriptionResponse(SubscriptionBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class StockAnalysisResponse(BaseModel):
+    stock_symbol: str
+    news_data: Optional[str]
+    analysis_result: Optional[str]
+    recommendation: Optional[str]
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
 </file>
 
 <file path="services/ai_analyzer.py">
@@ -12092,6 +11791,341 @@ if __name__ == "__main__":
         except (IndexError, ValueError):
             print("Invalid port number, using default port 8000")
     uvicorn.run("run:app", host="0.0.0.0", port=port, reload=True)
+</file>
+
+<file path="app/db/models.py">
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Date, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from datetime import datetime, date
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    email = Column(String(100), unique=True, index=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    email_notifications = Column(Boolean, default=True)
+    is_superuser = Column(Boolean, default=False, nullable=False) 
+    tier = Column(String(20), default='free')
+    subscription_expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    
+    def get_subscribed_stocks_list(self):
+        """获取用户订阅的股票代码列表"""
+        return [sub.stock_symbol for sub in self.subscriptions]
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    stock_symbol = Column(String(10), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User", back_populates="subscriptions")
+
+class StockAnalysis(Base):
+    __tablename__ = "stock_analyses"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    stock_symbol = Column(String(10), nullable=False, index=True)
+    analysis_date = Column(Date, nullable=False, default=date.today)
+    analysis_result = Column(JSON)
+    latest_price_data = Column(JSON)
+    news_data = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+</file>
+
+<file path="app/api/main_api_router.py">
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from datetime import timedelta, datetime
+from app.db.database import get_db
+from app.db.models import User, Subscription, StockAnalysis
+from app.schemas import UserCreate, UserResponse, UserUpdateEmail, SubscriptionCreate, SubscriptionResponse, StockAnalysisResponse, Token
+from app.core.security import authenticate_user, create_access_token, get_current_user, get_password_hash, get_current_user_from_cookie_or_header
+from services.alpha_vantage_api import AlphaVantageAPI
+from services.ai_analyzer import AIAnalyzer
+from services.email_service import EmailService
+from services.symbol_service import stock_symbol_service
+from typing import List
+
+router = APIRouter()
+
+# 初始化服务
+alpha_api = AlphaVantageAPI()
+ai_analyzer = AIAnalyzer()
+email_service = EmailService()
+
+@router.post("/register", response_model=UserResponse)
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    """用户注册"""
+    # 检查用户名是否已存在
+    if db.query(User).filter(User.username == user.username).first():
+        raise HTTPException(
+            status_code=400,
+            detail="Username already registered"
+        )
+    
+    # 检查邮箱是否已存在
+    if db.query(User).filter(User.email == user.email).first():
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+    
+    # 创建新用户
+    db_user = User(
+        username=user.username,
+        email=user.email,
+        password_hash=get_password_hash(user.password)
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@router.post("/token", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """用户登录"""
+    user = authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=30)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.get("/users/me", response_model=UserResponse)
+def read_users_me(current_user: User = Depends(get_current_user)):
+    """获取当前用户信息"""
+    return current_user
+
+
+@router.put("/users/me/email", response_model=UserResponse)
+def update_user_email(
+    email_update: UserUpdateEmail,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """更新用户邮箱"""
+    # 检查邮箱是否已被其他用户使用
+    existing_user = db.query(User).filter(
+        User.email == email_update.email,
+        User.id != current_user.id
+    ).first()
+    
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered by another user"
+        )
+    
+    # 更新邮箱
+    current_user.email = email_update.email
+    db.commit()
+    db.refresh(current_user)
+    
+    return current_user
+
+@router.post("/subscribe", response_model=SubscriptionResponse)
+def subscribe_stock(
+    request: Request,
+    subscription: SubscriptionCreate,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """订阅股票"""
+    # 获取当前用户的订阅数量
+    subscription_count = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id
+    ).count()
+    
+    # 检查用户等级和订阅限制
+    if current_user.tier == 'free' and subscription_count >= 5:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="免费用户最多只能添加5支股票，请升级您的账户。"
+        )
+    
+    # 检查是否已订阅
+    existing = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.stock_symbol == subscription.stock_symbol.upper()
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Stock already subscribed"
+        )
+    
+    # 创建订阅
+    db_subscription = Subscription(
+        user_id=current_user.id,
+        stock_symbol=subscription.stock_symbol.upper()
+    )
+    db.add(db_subscription)
+    db.commit()
+    db.refresh(db_subscription)
+    return db_subscription
+
+@router.delete("/unsubscribe/{symbol}")
+def unsubscribe_stock(
+    symbol: str,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """取消订阅股票"""
+    subscription = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.stock_symbol == symbol.upper()
+    ).first()
+    
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found"
+        )
+    
+    db.delete(subscription)
+    db.commit()
+    return {"message": "Unsubscribed successfully"}
+
+@router.get("/subscriptions", response_model=List[SubscriptionResponse])
+def get_subscriptions(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """获取用户订阅的股票"""
+    subscriptions = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id
+    ).all()
+    return subscriptions
+
+@router.get("/analyze/{symbol}")
+def analyze_stock(
+    request: Request,
+    symbol: str,
+    current_user: User = Depends(get_current_user_from_cookie_or_header),
+    db: Session = Depends(get_db)
+):
+    """获取股票分析报告"""
+    symbol = symbol.upper()
+    
+    # 查询数据库获取最新的分析报告
+    latest_analysis = db.query(StockAnalysis).filter(
+        StockAnalysis.stock_symbol == symbol
+    ).order_by(
+        StockAnalysis.analysis_date.desc()
+    ).first()
+    
+    # 如果找不到记录，返回404错误
+    if not latest_analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"股票 {symbol} 的分析报告尚未生成，请稍后再试。"
+        )
+    
+    # 格式化响应数据
+    try:
+        news_data = latest_analysis.news_data or {}
+        return {
+            "symbol": latest_analysis.stock_symbol,
+            "analysis_date": latest_analysis.analysis_date.isoformat(),
+            "news": news_data.get("news", []) if isinstance(news_data, dict) else [],
+            "analysis": latest_analysis.analysis_result if latest_analysis.analysis_result is not None else {},
+            "latest_data": latest_analysis.latest_price_data if latest_analysis.latest_price_data is not None else {}
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"处理分析报告时发生内部错误: {str(e)}"
+        )
+
+@router.post("/send-report")
+def send_daily_report(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """发送每日报告"""
+    # 获取用户订阅的股票
+    subscriptions = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id
+    ).all()
+    
+    if not subscriptions:
+        raise HTTPException(
+            status_code=404,
+            detail="No subscriptions found"
+        )
+    
+    analyses = []
+    for subscription in subscriptions:
+        symbol = subscription.stock_symbol
+        
+        # 获取股票数据
+        news_data = alpha_api.get_stock_news(symbol)
+        price_data = alpha_api.get_daily_prices(symbol)
+        
+        if news_data:
+            # AI分析
+            analysis = ai_analyzer.analyze_stock_news(symbol, news_data, price_data)
+            analyses.append(analysis)
+    
+    if analyses:
+        # 发送邮件
+        success = email_service.send_analysis_report(current_user.email, analyses)
+        if success:
+            return {"message": "Report sent successfully"}
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to send report"
+            )
+    
+    return {"message": "No data to analyze"}
+
+@router.post("/toggle-notifications")
+def toggle_email_notifications(
+    enabled: bool,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """切换邮件通知设置"""
+    current_user.email_notifications = enabled
+    db.commit()
+    return {"message": "Email notifications updated", "enabled": enabled}
+
+@router.get("/search-symbols")
+def search_symbols(
+    keyword: str,
+    current_user: User = Depends(get_current_user_from_cookie_or_header)
+):
+    """搜索股票符号"""
+    try:
+        results = stock_symbol_service.search(keyword)
+        return results
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"搜索股票符号时发生错误: {str(e)}"
+        )
 </file>
 
 <file path="app/web/templates/dashboard.html">
@@ -12703,7 +12737,13 @@ function submitAddStock() {
         location.reload();
     })
     .catch(error => {
-        alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+        if (error.response?.status === 403) {
+            // 对于403错误，显示服务器返回的详细错误信息
+            alert(error.response?.data?.detail || '免费用户最多只能添加5支股票，请升级您的账户。');
+        } else {
+            // 对于其他错误，保持现有的通用错误提示
+            alert('添加失败: ' + (error.response?.data?.error || '未知错误'));
+        }
     });
 }
 

@@ -1,33 +1,20 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
 from app.db.database import engine, Base
 from app.api.main_api_router import router
 from app.api.admin_router import router as admin_router
 from app.web.routes import router as web_router
-from app.daily_tasks import scheduler
 import uvicorn
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """管理应用生命周期"""
-    # 启动定时任务
-    scheduler.start()
-    yield
-    # 关闭定时任务
-    if scheduler.scheduler.running:
-        scheduler.stop()
-
 # 创建FastAPI应用
 app = FastAPI(
     title="股票分析API",
     description="基于新闻和AI的股票分析系统",
-    version="1.0.0",
-    lifespan=lifespan
+    version="1.0.0"
 )
 
 # 配置CORS

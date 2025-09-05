@@ -190,9 +190,9 @@ Based on your analysis, respond with a single, valid JSON object that contains y
                 analysis = json.loads(raw_response_text)
             else:
                 # 对于Ollama，使用原有的JSON提取逻辑
-                extracted_json = self.extract_json_from_qwen_output(raw_response_text)
-                extracted_json = json.dumps(extracted_json, indent=2, ensure_ascii=False)
-                analysis = json.loads(extracted_json)
+                analysis = self.extract_json_from_qwen_output(raw_response_text)
+                #extracted_json = json.dumps(extracted_json, indent=2, ensure_ascii=False)
+                #analysis = json.loads(extracted_json)
             
             if not isinstance(analysis, dict) or not analysis:
                 error_message = "AI model returned valid JSON, but it was empty or not an object."
