@@ -1,5 +1,5 @@
-#!/bin/sh
-# wait-for-postgres.sh
+#!/bin/bash
+# wait-for-postgres.sh (version 2, no `nc` required)
 
 set -e
 
@@ -10,10 +10,11 @@ port=$(echo $DATABASE_URL | sed -e 's,.*@.*:\(.*\)/.*,\1,')
 
 echo "Waiting for postgres at $host:$port..."
 
-# 使用 nc (netcat) 检查端口是否打开
-# -z 选项表示只扫描端口，不发送数据
-# -w1 选项设置1秒超时
-while ! nc -z $host $port; do
+# 使用 bash 内置的 /dev/tcp 功能检查端口
+# 这避免了对 `nc` (netcat) 的依赖
+# `&>/dev/null` 将标准输出和标准错误都重定向到 null，保持日志干净
+while ! (</dev/tcp/$host/$port) &>/dev/null; do
+  echo "Postgres is unavailable - sleeping"
   sleep 1
 done
 
