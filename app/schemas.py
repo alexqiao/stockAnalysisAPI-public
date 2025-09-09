@@ -22,6 +22,7 @@ class UserResponse(UserBase):
     tier: str
     subscription_expires_at: Optional[datetime] = None
     created_at: datetime
+    subscriptions: List["SubscriptionResponse"] = []
     
     class Config:
         from_attributes = True
