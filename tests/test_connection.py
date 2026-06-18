@@ -8,7 +8,7 @@ proxies = {
 }
 # -------------------------
 
-api_key = "***REMOVED***" # 您的API Key
+api_key = "YOUR_API_KEY" # 您的API Key
 symbol = "TSLA"
 url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={api_key}"
 
